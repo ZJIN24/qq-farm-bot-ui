@@ -18,7 +18,7 @@ function createDataProvider(options) {
         startWorker,
         stopWorker,
         restartWorker,
-        startReloginWatcher,
+        handleReceivedCode,
         applyReloginCode,
     } = options;
 
@@ -87,7 +87,18 @@ function createDataProvider(options) {
             return { accountId: accId, cleared };
         },
 
-        getAccountLogs: (limit) => accountLogs.slice(-limit).reverse(),
+        getAccountLogs: (accountRefOrLimit, maybeLimit) => {
+            const hasAccountRef = typeof accountRefOrLimit === 'string' || Array.isArray(accountRefOrLimit);
+            const rawRef = hasAccountRef ? normalizeAccountRef(accountRefOrLimit) : '';
+            const max = Math.max(1, Number(hasAccountRef ? maybeLimit : accountRefOrLimit) || 100);
+            if (!rawRef || rawRef === 'all') {
+                return accountLogs.slice(-max).reverse();
+            }
+            const accountId = resolveAccountRefId(rawRef);
+            if (!accountId) return [];
+            const accId = String(accountId || '');
+            return accountLogs.filter(entry => String((entry && entry.accountId) || '') === accId).slice(-max).reverse();
+        },
         addAccountLog: (action, msg, accountId, accountName, extra) => addAccountLog(action, msg, accountId, accountName, extra),
 
         // 透传方法
@@ -204,16 +215,31 @@ function createDataProvider(options) {
             return true;
         },
 
-        /** 接收 code，直接当作登录凭证使用（不扫码），更新/创建账号并重启 */
-        applyReceivedCode: (opts) => {
+        /** 接收 code，支持 loginCode / authCode / ticket，自动解析并重登录 */
+        applyReceivedCode: async (opts) => {
+            const body = (opts && typeof opts === 'object') ? opts : {};
+            const inputAccountRef = body.accountId || body.uin || '';
+            const resolvedAccountId = resolveAccountRefId(inputAccountRef);
+
+            if (typeof handleReceivedCode === 'function') {
+                return handleReceivedCode({
+                    code: String(body.code || '').trim(),
+                    authCode: String(body.authCode || body.auth_code || '').trim(),
+                    loginCode: String(body.loginCode || body.login_code || '').trim(),
+                    ticket: String(body.ticket || '').trim(),
+                    accountId: resolvedAccountId || String(body.accountId || '').trim(),
+                    accountName: String(body.accountName || body.name || '').trim(),
+                    uin: String(body.uin || body.qq || '').trim(),
+                });
+            }
+
             if (typeof applyReloginCode !== 'function') return false;
-            const { authCode, accountId = '', accountName = '', uin = '' } = opts || {};
-            const resolvedAccountId = resolveAccountRefId(accountId || uin);
+            const authCode = String(body.authCode || body.auth_code || body.code || '').trim();
             applyReloginCode({
-                accountId: resolvedAccountId || String(accountId || '').trim(),
-                accountName,
-                authCode: String(authCode || '').trim(),
-                uin: String(uin || '').trim(),
+                accountId: resolvedAccountId || String(body.accountId || '').trim(),
+                accountName: String(body.accountName || body.name || '').trim(),
+                authCode,
+                uin: String(body.uin || body.qq || '').trim(),
             });
             return true;
         },

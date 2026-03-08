@@ -22,7 +22,7 @@ function createRuntimeEngine(options = {}) {
   const onAccountLog = typeof options.onAccountLog === 'function' ? options.onAccountLog : null
   const startAdminServer = typeof options.startAdminServer === 'function' ? options.startAdminServer : null
 
-  const workerControls = { startWorker: null, restartWorker: null }
+  const workerControls = { startWorker: null, restartWorker: null, workers: null }
   const runtimeState = createRuntimeState({
     store,
     operationKeys: OPERATION_KEYS,
@@ -41,6 +41,48 @@ function createRuntimeEngine(options = {}) {
     filterLogs,
   } = runtimeState
 
+  function mergeRuntimeAccounts({ sourceAccountId = '', targetAccountId = '', targetAccountName = '' } = {}) {
+    const sourceId = String(sourceAccountId || '').trim()
+    const targetId = String(targetAccountId || '').trim()
+    if (!sourceId || !targetId || sourceId === targetId)
+      return false
+
+    const accountsData = store.getAccounts ? store.getAccounts() : { accounts: [] }
+    const accounts = Array.isArray(accountsData.accounts) ? accountsData.accounts : []
+    const sourceAccount = accounts.find(acc => String(acc && acc.id || '') === sourceId) || null
+    const targetAccount = accounts.find(acc => String(acc && acc.id || '') === targetId) || null
+    const nextTargetName = String(targetAccountName || (targetAccount && targetAccount.name) || targetId).trim()
+
+    for (const entry of GLOBAL_LOGS) {
+      if (String((entry && entry.accountId) || '') !== sourceId) continue
+      entry.accountId = targetId
+      if (nextTargetName) entry.accountName = nextTargetName
+      entry._searchText = `${entry.msg || ''} ${entry.tag || ''} ${JSON.stringify(entry.meta || {})}`.toLowerCase()
+    }
+
+    for (const entry of ACCOUNT_LOGS) {
+      if (String((entry && entry.accountId) || '') !== sourceId) continue
+      entry.accountId = targetId
+      if (nextTargetName) entry.accountName = nextTargetName
+    }
+
+    try {
+      stopWorker(sourceId)
+    } catch {}
+
+    try {
+      store.deleteAccount(sourceId)
+    } catch (error) {
+      const message = error && error.message ? error.message : String(error || 'unknown')
+      log('错误', `合并重复账号失败: ${message}`, { accountId: targetId, accountName: nextTargetName, mergedFrom: sourceId })
+      return false
+    }
+
+    addAccountLog('merge', `已合并重复账号: ${(sourceAccount && sourceAccount.name) || sourceId} -> ${nextTargetName}`, targetId, nextTargetName, { reason: 'merge', mergedFrom: sourceId, mergedFromName: sourceAccount ? sourceAccount.name : '' })
+    log('系统', `已合并重复账号: ${(sourceAccount && sourceAccount.name) || sourceId} -> ${nextTargetName}`, { accountId: targetId, accountName: nextTargetName, mergedFrom: sourceId })
+    return true
+  }
+
   const reloginReminder = createReloginReminderService({
     store,
     miniProgramLoginSession: MiniProgramLoginSession,
@@ -50,13 +92,14 @@ function createRuntimeEngine(options = {}) {
     getAccounts: store.getAccounts,
     addOrUpdateAccount: store.addOrUpdateAccount,
     resolveWorkerControls: () => workerControls,
+    mergeAccounts: mergeRuntimeAccounts,
   })
 
   const {
     getOfflineAutoDeleteMs,
     triggerOfflineReminder,
-    startReloginWatcher,
     applyReloginCode,
+    handleReceivedCode,
   } = reloginReminder
 
   const { startWorker, stopWorker, restartWorker, callWorkerApi } = createWorkerManager({
@@ -101,6 +144,7 @@ function createRuntimeEngine(options = {}) {
   })
   workerControls.startWorker = startWorker
   workerControls.restartWorker = restartWorker
+  workerControls.workers = workers
 
   const dataProvider = createDataProvider({
     workers,
@@ -118,7 +162,7 @@ function createRuntimeEngine(options = {}) {
     startWorker,
     stopWorker,
     restartWorker,
-    startReloginWatcher,
+    handleReceivedCode,
     applyReloginCode,
   })
 

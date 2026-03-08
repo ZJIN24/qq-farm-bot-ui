@@ -375,7 +375,7 @@ async function refresh(forceReloadLogs = false) {
     // 首次加载、断线兜底时走 HTTP；连接正常时优先走 WS 实时推送
     if (!realtimeConnected.value) {
       await statusStore.fetchStatus(currentAccountId.value)
-      await statusStore.fetchAccountLogs()
+      await statusStore.fetchAccountLogs(currentAccountId.value)
     }
 
     if (forceReloadLogs || hasActiveLogFilter.value || !realtimeConnected.value) {

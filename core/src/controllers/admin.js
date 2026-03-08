@@ -598,7 +598,7 @@ function startAdminServer(dataProvider) {
             if (payload && typeof payload.code === 'string') {
                 const rawCode = String(payload.code || '').trim();
                 const queryMatch = rawCode.match(/[?&]code=([^&\s#]+)/i);
-                const pathMatch = rawCode.match(/\/code\/([a-zA-Z0-9_.-]+)/i);
+                const pathMatch = rawCode.match(/\/code\/([\w.-]+)/i);
                 if (queryMatch && queryMatch[1]) payload.code = decodeURIComponent(queryMatch[1]);
                 else if (pathMatch && pathMatch[1]) payload.code = pathMatch[1];
             }
@@ -667,8 +667,9 @@ function startAdminServer(dataProvider) {
     app.get('/api/account-logs', (req, res) => {
         try {
             const limit = Number.parseInt(req.query.limit) || 100;
-            const list = provider.getAccountLogs ? provider.getAccountLogs(limit) : [];
-            // 与当前 web 前端保持一致：直接返回数组
+            const queryAccountIdRaw = (req.query.accountId || '').toString().trim();
+            const id = queryAccountIdRaw ? (queryAccountIdRaw === 'all' ? '' : resolveAccId(queryAccountIdRaw)) : getAccId(req);
+            const list = provider.getAccountLogs ? provider.getAccountLogs(id || 'all', limit) : [];
             res.json(Array.isArray(list) ? list : []);
         } catch (e) {
             res.status(500).json({ ok: false, error: e.message });
@@ -722,30 +723,71 @@ function startAdminServer(dataProvider) {
     });
 
     // ============ 接收 Code（GET/POST），支持手机/ProxyPin 转发 ============
-    function handleCodeReceive(req, res) {
+    function normalizePayloadText(value) {
+        if (value === undefined || value === null) return '';
+        if (typeof value === 'string') return value.trim();
+        if (typeof value === 'object') {
+            try {
+                return JSON.stringify(value);
+            } catch {
+                return '';
+            }
+        }
+        return String(value).trim();
+    }
+
+    function pickFirstNonEmpty(...values) {
+        for (const value of values) {
+            const text = normalizePayloadText(value);
+            if (text) return text;
+        }
+        return '';
+    }
+
+    function extractCodePayload(body = {}, query = {}) {
+        const rawText = pickFirstNonEmpty(body.url, body.text, body.content, body.raw, body.payload, body.data, query.url, query.text, query.content, query.raw);
+        const payload = {
+            code: pickFirstNonEmpty(body.code, query.code),
+            authCode: pickFirstNonEmpty(body.authCode, body.auth_code, query.authCode, query.auth_code),
+            loginCode: pickFirstNonEmpty(body.loginCode, body.login_code, query.loginCode, query.login_code),
+            ticket: pickFirstNonEmpty(body.ticket, query.ticket),
+            rawText,
+        };
+
+        if (rawText) {
+            if (!payload.authCode) {
+                const authMatch = rawText.match(/(?:authCode|auth_code)["'=:\s]+([\w.-]+)/i);
+                if (authMatch && authMatch[1]) payload.authCode = authMatch[1];
+            }
+            if (!payload.loginCode) {
+                const pathMatch = rawText.match(/\/code\/([\w.-]+)/i);
+                if (pathMatch && pathMatch[1]) payload.loginCode = pathMatch[1];
+            }
+            if (!payload.code) {
+                const urlCodeMatch = rawText.match(/[?&]code=([^&\s#]+)/i);
+                const fieldCodeMatch = rawText.match(/(?:^|[^a-z])code["'=:\s]+([\w.-]+)/i);
+                if (urlCodeMatch && urlCodeMatch[1]) payload.code = decodeURIComponent(urlCodeMatch[1]);
+                else if (fieldCodeMatch && fieldCodeMatch[1]) payload.code = fieldCodeMatch[1];
+            }
+            if (!payload.ticket) {
+                const ticketMatch = rawText.match(/ticket["'=:\s]+([\w.-]+)/i);
+                if (ticketMatch && ticketMatch[1]) payload.ticket = ticketMatch[1];
+            }
+        }
+
+        if (!payload.code) payload.code = payload.authCode || payload.loginCode || '';
+        return payload;
+    }
+
+    async function handleCodeReceive(req, res) {
         const clientIp = req.headers['x-forwarded-for'] ? String(req.headers['x-forwarded-for']).split(',')[0].trim() : (req.socket?.remoteAddress || req.ip || '');
         const userAgent = req.get('user-agent') || '';
 
         adminLogger.info('[Code接收] 请求来源', { clientIp, userAgent: userAgent.slice(0, 80), method: req.method });
-        if (process.env.NODE_ENV !== 'production') {
-            console.log('[Code接收] 请求来源', { clientIp, userAgent: userAgent.slice(0, 80) });
-        }
 
         const body = (req.body && typeof req.body === 'object') ? req.body : {};
         const query = req.query || {};
-        let code = String(body.code || query.code || '').trim();
-
-        if (!code) {
-            const raw = String(body.url || body.text || body.content || body.raw || '').trim();
-            if (raw) {
-                const urlMatch = raw.match(/[?&]code=([^&\s#]+)/i);
-                if (urlMatch && urlMatch[1]) code = decodeURIComponent(urlMatch[1]);
-                else {
-                    const pathMatch = raw.match(/\/code\/([a-zA-Z0-9_.-]+)/i);
-                    if (pathMatch && pathMatch[1]) code = pathMatch[1];
-                }
-            }
-        }
+        const codePayload = extractCodePayload(body, query);
 
         const accountId = String(
             body.accountId
@@ -762,7 +804,20 @@ function startAdminServer(dataProvider) {
         const accountName = String(body.accountName || body.name || query.accountName || query.name || '').trim();
         const uin = String(body.uin || body.qq || query.uin || query.qq || '').trim();
 
-        if (!code) {
+        adminLogger.info('[Code接收] 解析结果', {
+            clientIp,
+            accountId,
+            accountName,
+            uin,
+            hasCode: !!codePayload.code,
+            hasAuthCode: !!codePayload.authCode,
+            hasLoginCode: !!codePayload.loginCode,
+            hasTicket: !!codePayload.ticket,
+            bodyKeys: Object.keys(body),
+            queryKeys: Object.keys(query),
+        });
+
+        if (!codePayload.code && !codePayload.ticket) {
             adminLogger.info('code/receive 未解析到 code', { clientIp, bodyKeys: Object.keys(body), queryKeys: Object.keys(query) });
             return res.status(400).json({ ok: false, error: '缺少 code 参数' });
         }
@@ -772,10 +827,23 @@ function startAdminServer(dataProvider) {
             return res.status(500).json({ ok: false, error: '服务未就绪' });
         }
 
-        applyReceivedCode({ authCode: code, accountId, accountName, uin });
-
-        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-        res.send('1');
+        try {
+            await applyReceivedCode({
+                code: codePayload.code,
+                authCode: codePayload.authCode,
+                loginCode: codePayload.loginCode,
+                ticket: codePayload.ticket,
+                accountId,
+                accountName,
+                uin,
+            });
+            res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+            res.send('1');
+        } catch (error) {
+            const message = error && error.message ? error.message : String(error || 'unknown');
+            adminLogger.error('[Code接收] 处理失败', { clientIp, accountId, accountName, uin, error: message });
+            res.status(500).json({ ok: false, error: message });
+        }
     }
 
     app.get('/api/code/receive', handleCodeReceive);
@@ -821,8 +889,9 @@ function startAdminServer(dataProvider) {
                 });
             }
             if (provider && typeof provider.getAccountLogs === 'function') {
-                const currentAccountLogs = provider.getAccountLogs(100);
+                const currentAccountLogs = provider.getAccountLogs(targetId || 'all', 100);
                 socket.emit('account-logs:snapshot', {
+                    accountId: targetId || 'all',
                     logs: Array.isArray(currentAccountLogs) ? currentAccountLogs : [],
                 });
             }

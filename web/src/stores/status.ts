@@ -252,9 +252,17 @@ export const useStatusStore = defineStore('status', () => {
     }
   }
 
-  async function fetchAccountLogs(limit = 100) {
+  async function fetchAccountLogs(accountId = '', limit = 100) {
     try {
-      const res = await api.get(`/api/account-logs?limit=${Math.max(1, Number(limit) || 100)}`)
+      const id = String(accountId || '').trim()
+      const params: any = { limit: Math.max(1, Number(limit) || 100) }
+      const headers: any = {}
+      if (id && id !== 'all')
+        headers['x-account-id'] = id
+      else
+        params.accountId = 'all'
+
+      const res = await api.get('/api/account-logs', { headers, params })
       if (Array.isArray(res.data)) {
         accountLogs.value = res.data
       }
