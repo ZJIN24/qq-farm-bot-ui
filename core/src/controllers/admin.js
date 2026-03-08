@@ -415,14 +415,53 @@ function startAdminServer(dataProvider) {
         }
     });
 
-    // API: 停止账号
+    // API: 停止账号（未保存临时账号会直接删除）
     app.post('/api/accounts/:id/stop', (req, res) => {
         try {
-            const ok = provider.stopAccount(resolveAccId(req.params.id));
+            const resolvedId = resolveAccId(req.params.id) || String(req.params.id || '');
+            const before = provider.getAccounts();
+            const target = findAccountByRef((before && before.accounts) || [], req.params.id);
+            if (!target || !target.id) {
+                return res.status(404).json({ ok: false, error: 'Account not found' });
+            }
+
+            if (!target.saved) {
+                try {
+                    provider.stopAccount(resolvedId);
+                } catch {
+                    // ignore stop failure for transient account cleanup
+                }
+                const data = deleteAccount(resolvedId);
+                if (provider.addAccountLog) {
+                    provider.addAccountLog('delete', `停止后自动删除临时账号: ${target.name || resolvedId}`, resolvedId, target.name || '');
+                }
+                return res.json({ ok: true, deleted: true, data });
+            }
+
+            const ok = provider.stopAccount(resolvedId);
             if (!ok) {
                 return res.status(404).json({ ok: false, error: 'Account not found' });
             }
-            res.json({ ok: true });
+            res.json({ ok: true, deleted: false });
+        } catch (e) {
+            res.status(500).json({ ok: false, error: e.message });
+        }
+    });
+
+    // API: 保存账号（保存后掉线不自动删除）
+    app.post('/api/accounts/:id/save', (req, res) => {
+        try {
+            const resolvedId = resolveAccId(req.params.id) || String(req.params.id || '');
+            const before = provider.getAccounts();
+            const target = findAccountByRef((before && before.accounts) || [], req.params.id);
+            if (!target || !target.id) {
+                return res.status(404).json({ ok: false, error: 'Account not found' });
+            }
+            const data = addOrUpdateAccount({ id: resolvedId, saved: true });
+            if (provider.addAccountLog) {
+                provider.addAccountLog('update', `已保存账号: ${target.name || resolvedId}`, resolvedId, target.name || '');
+            }
+            res.json({ ok: true, data });
         } catch (e) {
             res.status(500).json({ ok: false, error: e.message });
         }
@@ -461,6 +500,27 @@ function startAdminServer(dataProvider) {
         }
         try {
             const data = await provider.saveSettings(id, req.body || {});
+            res.json({ ok: true, data: data || {} });
+        } catch (e) {
+            res.status(500).json({ ok: false, error: e.message });
+        }
+    });
+
+    // API: 设为默认设置（供新账号继承）
+    app.post('/api/settings/default', async (req, res) => {
+        try {
+            const body = (req.body && typeof req.body === 'object') ? req.body : {};
+            const plantingStrategy = (body.plantingStrategy !== undefined) ? body.plantingStrategy : body.strategy;
+            const preferredSeedId = (body.preferredSeedId !== undefined) ? body.preferredSeedId : body.seedId;
+            const snapshot = {
+                plantingStrategy,
+                preferredSeedId,
+                intervals: body.intervals,
+                friendQuietHours: body.friendQuietHours,
+                fertilizerByLandLevel: body.fertilizerByLandLevel,
+                automation: body.automation,
+            };
+            const data = store.applyConfigSnapshot(snapshot, { accountId: '' });
             res.json({ ok: true, data: data || {} });
         } catch (e) {
             res.status(500).json({ ok: false, error: e.message });
@@ -594,7 +654,11 @@ function startAdminServer(dataProvider) {
             const body = (req.body && typeof req.body === 'object') ? req.body : {};
             const isUpdate = !!body.id;
             const resolvedUpdateId = isUpdate ? resolveAccId(body.id) : '';
-            const payload = isUpdate ? { ...body, id: resolvedUpdateId || String(body.id) } : body;
+            const payload = isUpdate ? { ...body, id: resolvedUpdateId || String(body.id) } : { ...body };
+            const loginType = String(payload.loginType || '').trim().toLowerCase();
+            if (!isUpdate && payload.saved === undefined) {
+                payload.saved = loginType === 'manual';
+            }
             if (payload && typeof payload.code === 'string') {
                 const rawCode = String(payload.code || '').trim();
                 const queryMatch = rawCode.match(/[?&]code=([^&\s#]+)/i);
@@ -744,9 +808,18 @@ function startAdminServer(dataProvider) {
         return '';
     }
 
+    function normalizeLoginPlatform(value) {
+        const text = normalizePayloadText(value).toLowerCase();
+        if (!text) return '';
+        if (text === 'wx' || text === 'wechat' || text === 'weixin') return 'wx';
+        if (text === 'qq') return 'qq';
+        return '';
+    }
+
     function extractCodePayload(body = {}, query = {}, headers = {}) {
         const rawText = pickFirstNonEmpty(body.url, body.text, body.content, body.raw, body.payload, body.data, query.url, query.text, query.content, query.raw);
         const payload = {
+            platform: normalizeLoginPlatform(pickFirstNonEmpty(body.platform, query.platform)),
             code: pickFirstNonEmpty(body.code, query.code),
             authCode: pickFirstNonEmpty(body.authCode, body.auth_code, query.authCode, query.auth_code),
             loginCode: pickFirstNonEmpty(body.loginCode, body.login_code, query.loginCode, query.login_code),
@@ -755,6 +828,12 @@ function startAdminServer(dataProvider) {
         };
 
         if (rawText) {
+            if (!payload.platform) {
+                const urlPlatformMatch = rawText.match(/[?&]platform=([^&\s#]+)/i);
+                const fieldPlatformMatch = rawText.match(/(?:^|[^a-z])platform["'=:\s]+([\w.-]+)/i);
+                if (urlPlatformMatch && urlPlatformMatch[1]) payload.platform = normalizeLoginPlatform(decodeURIComponent(urlPlatformMatch[1]));
+                else if (fieldPlatformMatch && fieldPlatformMatch[1]) payload.platform = normalizeLoginPlatform(fieldPlatformMatch[1]);
+            }
             if (!payload.authCode) {
                 const authMatch = rawText.match(/(?:authCode|auth_code)["'=:\s]+([\w.-]+)/i);
                 if (authMatch && authMatch[1]) payload.authCode = authMatch[1];
@@ -785,8 +864,9 @@ function startAdminServer(dataProvider) {
             || origin.includes('gate-obt.nqf.qq.com')
             || referer.includes('appservice.qq.com/1112386029')
         ) && !!pickFirstNonEmpty(query.platform, body.platform, query.ver, body.ver, query.os, body.os);
+        const looksLikeDirectCodeRequest = !!payload.platform && !!payload.code && !payload.authCode && !payload.loginCode && !payload.ticket;
 
-        if (looksLikeGateAuth && payload.code && !payload.authCode) {
+        if ((looksLikeGateAuth || looksLikeDirectCodeRequest) && payload.code && !payload.authCode) {
             payload.authCode = payload.code;
         }
 
@@ -835,12 +915,14 @@ function startAdminServer(dataProvider) {
         ).trim();
         const accountName = String(body.accountName || body.name || query.accountName || query.name || '').trim();
         const uin = String(body.uin || body.qq || query.uin || query.qq || '').trim();
+        const platform = codePayload.platform || normalizeLoginPlatform(body.platform || query.platform);
 
         adminLogger.info('[Code接收] 解析结果', {
             clientIp,
             accountId,
             accountName,
             uin,
+            platform,
             hasCode: !!codePayload.code,
             hasAuthCode: !!codePayload.authCode,
             hasLoginCode: !!codePayload.loginCode,
@@ -869,6 +951,7 @@ function startAdminServer(dataProvider) {
                 accountId,
                 accountName,
                 uin,
+                platform,
             });
             return {
                 statusCode: 200,

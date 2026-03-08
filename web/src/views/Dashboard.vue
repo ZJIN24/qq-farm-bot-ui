@@ -4,7 +4,6 @@ import { storeToRefs } from 'pinia'
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
-import BaseInput from '@/components/ui/BaseInput.vue'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
 import { useAccountStore } from '@/stores/account'
 import { useBagStore } from '@/stores/bag'
@@ -50,7 +49,8 @@ const allLogs = computed(() => {
 const latestCodeReceive = computed(() => {
   const list = statusAccountLogs.value || []
   const withCode = list.filter((l: any) => l.reason === 'code_receive')
-  if (!withCode.length) return null
+  if (!withCode.length)
+    return null
   const latest = withCode[withCode.length - 1]
   const ts = new Date(latest.time).getTime()
   return {
@@ -64,12 +64,11 @@ const latestCodeReceive = computed(() => {
 const filter = reactive({
   module: '',
   event: '',
-  keyword: '',
   isWarn: '',
 })
 
 const hasActiveLogFilter = computed(() =>
-  !!(filter.module || filter.event || filter.keyword || filter.isWarn),
+  !!(filter.module || filter.event || filter.isWarn),
 )
 
 const modules = [
@@ -218,6 +217,12 @@ let localFarmInspecting = false
 let localFriendInspecting = false
 let localFarmWaiting = false
 let localFriendWaiting = false
+let localFarmInspectingSince = 0
+let localFriendInspectingSince = 0
+
+function isInspectStateStale(startedAt: number) {
+  return startedAt > 0 && Date.now() - startedAt > 30000
+}
 
 function updateCountdowns() {
   // Update uptime
@@ -227,6 +232,17 @@ function updateCountdowns() {
   }
   else {
     localUptime.value++
+
+    if (localFarmInspecting && isInspectStateStale(localFarmInspectingSince)) {
+      localFarmInspecting = false
+      localFarmInspectingSince = 0
+      localFarmWaiting = localNextFarmRemainSec <= 0
+    }
+    if (localFriendInspecting && isInspectStateStale(localFriendInspectingSince)) {
+      localFriendInspecting = false
+      localFriendInspectingSince = 0
+      localFriendWaiting = localNextFriendRemainSec <= 0
+    }
 
     // 优先显示巡查状态
     if (localFarmInspecting) {
@@ -261,16 +277,26 @@ function updateCountdowns() {
 
 watch(status, (newVal) => {
   if (newVal?.nextChecks) {
-    // Only update local counters if they are significantly different or 0
-    // Actually, we should sync from server periodically.
-    // Here we just take server value when it comes.
-    localNextFarmRemainSec = newVal.nextChecks.farmRemainSec || 0
-    localNextFriendRemainSec = newVal.nextChecks.friendRemainSec || 0
-    localFarmInspecting = newVal.nextChecks.farmInspecting || false
-    localFriendInspecting = newVal.nextChecks.friendInspecting || false
-    localFarmWaiting = newVal.nextChecks.farmWaiting || false
-    localFriendWaiting = newVal.nextChecks.friendWaiting || false
-    updateCountdowns() // Update immediately
+    const nextFarmRemainSec = Number(newVal.nextChecks.farmRemainSec) || 0
+    const nextFriendRemainSec = Number(newVal.nextChecks.friendRemainSec) || 0
+    const nextFarmInspecting = !!newVal.nextChecks.farmInspecting && nextFarmRemainSec <= 0
+    const nextFriendInspecting = !!newVal.nextChecks.friendInspecting && nextFriendRemainSec <= 0
+
+    localNextFarmRemainSec = nextFarmRemainSec
+    localNextFriendRemainSec = nextFriendRemainSec
+    if (nextFarmInspecting && !localFarmInspecting)
+      localFarmInspectingSince = Date.now()
+    if (nextFriendInspecting && !localFriendInspecting)
+      localFriendInspectingSince = Date.now()
+    if (!nextFarmInspecting)
+      localFarmInspectingSince = 0
+    if (!nextFriendInspecting)
+      localFriendInspectingSince = 0
+    localFarmInspecting = nextFarmInspecting
+    localFriendInspecting = nextFriendInspecting
+    localFarmWaiting = !!newVal.nextChecks.farmWaiting && !nextFarmInspecting
+    localFriendWaiting = !!newVal.nextChecks.friendWaiting && !nextFriendInspecting
+    updateCountdowns()
   }
   if (newVal?.uptime !== undefined) {
     localUptime.value = newVal.uptime
@@ -382,21 +408,18 @@ async function refresh(forceReloadLogs = false) {
       await statusStore.fetchLogs(currentAccountId.value, {
         module: filter.module || undefined,
         event: filter.event || undefined,
-        keyword: filter.keyword || undefined,
+
         isWarn: filter.isWarn === 'warn' ? true : filter.isWarn === 'info' ? false : undefined,
       })
     }
 
-    // 仅在账号已运行且连接就绪后拉背包，避免启动阶段触发500
-    await refreshBag()
+    // 搜索/筛选日志时不再刷新背包，避免误报网络错误
+    if (!forceReloadLogs)
+      await refreshBag()
   }
 }
 
 function onLogFilterChange() {
-  refresh(true)
-}
-
-function onLogSearchTrigger() {
   refresh(true)
 }
 
@@ -485,7 +508,7 @@ useIntervalFn(updateCountdowns, 1000)
             <div class="i-fas-user-circle" />
             账号
           </div>
-          <div class="rounded bg-blue-100 px-2 py-0.5 text-xs text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
+          <div class="rounded bg-blue-100 px-4 py-1.5 text-lg text-blue-700 font-semibold dark:bg-blue-900/30 md:text-xl dark:text-blue-300">
             Lv.{{ status?.status?.level || 0 }}
           </div>
         </div>
@@ -653,23 +676,6 @@ useIntervalFn(updateCountdowns, 1000)
                 @change="onLogFilterChange"
               />
 
-              <BaseInput
-                v-model="filter.keyword"
-                placeholder="关键词..."
-                class="w-32"
-                clearable
-                @keyup.enter="onLogSearchTrigger"
-                @clear="onLogSearchTrigger"
-              />
-
-              <BaseButton
-                variant="primary"
-                size="sm"
-                @click="onLogSearchTrigger"
-              >
-                <div class="i-carbon-search" />
-              </BaseButton>
-
               <BaseButton
                 variant="danger"
                 size="sm"
@@ -685,9 +691,9 @@ useIntervalFn(updateCountdowns, 1000)
           <!-- 最新收到的 Code（接受到则在此显示） -->
           <div
             v-if="latestCodeReceive"
-            class="mb-3 rounded border border-green-200 bg-green-50 px-3 py-2 text-sm dark:border-green-800 dark:bg-green-900/20"
+            class="mb-3 border border-green-200 rounded bg-green-50 px-3 py-2 text-sm dark:border-green-800 dark:bg-green-900/20"
           >
-            <div class="font-medium text-green-800 dark:text-green-300">
+            <div class="text-green-800 font-medium dark:text-green-300">
               <span class="i-carbon-checkmark-filled mr-1" />
               新增 Code 已接收
             </div>

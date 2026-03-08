@@ -230,6 +230,7 @@ function createDataProvider(options) {
                     accountId: resolvedAccountId || String(body.accountId || '').trim(),
                     accountName: String(body.accountName || body.name || '').trim(),
                     uin: String(body.uin || body.qq || '').trim(),
+                    platform: String(body.platform || '').trim(),
                 });
             }
 
@@ -240,6 +241,7 @@ function createDataProvider(options) {
                 accountName: String(body.accountName || body.name || '').trim(),
                 authCode,
                 uin: String(body.uin || body.qq || '').trim(),
+                platform: String(body.platform || '').trim(),
             });
             return true;
         },

@@ -20,6 +20,7 @@ const { currentAccountId, accounts } = storeToRefs(accountStore)
 const { seeds } = storeToRefs(farmStore)
 
 const saving = ref(false)
+const defaultSaving = ref(false)
 const passwordSaving = ref(false)
 const offlineSaving = ref(false)
 const offlineTesting = ref(false)
@@ -375,6 +376,26 @@ async function saveAccountSettings() {
   }
 }
 
+async function saveDefaultSettings() {
+  if (!currentAccountId.value) {
+    showAlert('请先选择一个账号作为默认模板', 'danger')
+    return
+  }
+  defaultSaving.value = true
+  try {
+    const res = await settingStore.saveDefaultSettings(localSettings.value)
+    if (res.ok) {
+      showAlert('已设为默认策略，新登录账号会自动继承当前设置')
+    }
+    else {
+      showAlert(`保存失败: ${res.error}`, 'danger')
+    }
+  }
+  finally {
+    defaultSaving.value = false
+  }
+}
+
 async function handleChangePassword() {
   if (!passwordForm.value.old || !passwordForm.value.new) {
     showAlert('请填写完整', 'danger')
@@ -426,7 +447,9 @@ async function handleSaveOffline() {
 async function handleTestOffline() {
   offlineTesting.value = true
   try {
-    const { data } = await api.post('/api/settings/offline-reminder/test', localOffline.value)
+    const { data } = await api.post('/api/settings/offline-reminder/test', localOffline.value, {
+      validateStatus: () => true,
+    })
     if (data?.ok) {
       showAlert('测试消息发送成功')
     }
@@ -606,7 +629,15 @@ async function handleTestOffline() {
         </div>
 
         <!-- Save Button -->
-        <div class="mt-auto flex justify-end border-t bg-gray-50 px-4 py-3 dark:border-gray-700 dark:bg-gray-900/50">
+        <div class="mt-auto flex justify-end gap-3 border-t bg-gray-50 px-4 py-3 dark:border-gray-700 dark:bg-gray-900/50">
+          <BaseButton
+            variant="secondary"
+            size="sm"
+            :loading="defaultSaving"
+            @click="saveDefaultSettings"
+          >
+            设为默认（新账号）
+          </BaseButton>
           <BaseButton
             variant="primary"
             size="sm"

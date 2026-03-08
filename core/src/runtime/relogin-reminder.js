@@ -20,6 +20,14 @@ function createReloginReminderService(options) {
         return String(value || '').trim();
     }
 
+    function normalizePlatform(value) {
+        const text = normalizeText(value).toLowerCase();
+        if (!text) return '';
+        if (text === 'wx' || text === 'wechat' || text === 'weixin') return 'wx';
+        if (text === 'qq') return 'qq';
+        return '';
+    }
+
     function maskCode(code) {
         const text = normalizeText(code);
         return text.length > 8 ? `${text.slice(0, 4)}***${text.slice(-4)}` : '***';
@@ -55,29 +63,6 @@ function createReloginReminderService(options) {
             return normalizeText(left && left.id).localeCompare(normalizeText(right && right.id));
         });
     }
-
-    function pickAutoReloginTarget(list) {
-        const workers = getRuntimeWorkers();
-        const accounts = sortAccounts(list);
-        const candidates = accounts.filter((account) => {
-            const worker = workers[normalizeText(account && account.id)];
-            if (!worker) return false;
-            const wsCode = Number(worker && worker.wsError && worker.wsError.code) || 0;
-            const connected = !!(worker && worker.status && worker.status.connection && worker.status.connection.connected);
-            return wsCode === 400 || !connected || !!worker.disconnectedSince;
-        });
-
-        if (candidates.length === 1) return candidates[0];
-
-        const strictWs400 = candidates.filter((account) => {
-            const worker = workers[normalizeText(account && account.id)];
-            return Number(worker && worker.wsError && worker.wsError.code) === 400;
-        });
-        if (strictWs400.length === 1) return strictWs400[0];
-
-        return null;
-    }
-
     function pickPrimaryAccount(list, context = {}) {
         const accounts = sortAccounts(list);
         const normalizedId = normalizeText(context.accountId);
@@ -114,13 +99,6 @@ function createReloginReminderService(options) {
                 return name === normalizedName || nick === normalizedName;
             });
             if (matchedByName.length === 1) return matchedByName[0];
-        }
-
-        const autoTarget = pickAutoReloginTarget(accounts);
-        if (autoTarget) return autoTarget;
-
-        if (!normalizedId && !normalizedUin && !normalizedName && accounts.length === 1) {
-            return accounts[0];
         }
 
         return null;
@@ -170,7 +148,7 @@ function createReloginReminderService(options) {
         return pickPrimaryAccount(list, context);
     }
 
-    function applyReloginCode({ accountId = '', accountName = '', authCode = '', uin = '' }) {
+    function applyReloginCode({ accountId = '', accountName = '', authCode = '', uin = '', platform = '' }) {
         const code = normalizeText(authCode);
         if (!code) return null;
 
@@ -178,12 +156,13 @@ function createReloginReminderService(options) {
         const list = Array.isArray(data.accounts) ? data.accounts : [];
         const found = resolveReloginTarget(list, { accountId, accountName, uin });
         const duplicates = collectDuplicateAccounts(list, found, { uin });
-        const avatar = uin ? `https://q1.qlogo.cn/g?b=qq&nk=${uin}&s=640` : '';
+        const resolvedPlatform = normalizePlatform(platform) || normalizePlatform(found && found.platform) || 'qq';
+        const avatar = resolvedPlatform === 'qq' && uin ? `https://q1.qlogo.cn/g?b=qq&nk=${uin}&s=640` : '';
         const controls = getRuntimeControls();
         const startWorker = typeof controls.startWorker === 'function' ? controls.startWorker : null;
         const restartWorker = typeof controls.restartWorker === 'function' ? controls.restartWorker : null;
         const targetAccountId = normalizeText(found && found.id) || normalizeText(accountId);
-        const targetAccountName = normalizeText(found && found.name) || normalizeText(accountName) || targetAccountId || '未知账号';
+        const targetAccountName = normalizeText(found && found.name) || normalizeText(accountName) || targetAccountId || (resolvedPlatform === 'wx' ? '微信账号' : '未知账号');
         const codeMask = maskCode(code);
 
         if (!uin) {
@@ -197,7 +176,7 @@ function createReloginReminderService(options) {
                 id: found.id,
                 name: found.name,
                 code,
-                platform: found.platform || 'qq',
+                platform: resolvedPlatform,
                 qq: uin || found.qq || found.uin || '',
                 uin: uin || found.uin || found.qq || '',
                 avatar: avatar || found.avatar || '',
@@ -206,13 +185,14 @@ function createReloginReminderService(options) {
                 restartWorker({
                     ...found,
                     code,
+                    platform: resolvedPlatform,
                     qq: uin || found.qq || found.uin || '',
                     uin: uin || found.uin || found.qq || '',
                     avatar: avatar || found.avatar || '',
                 });
             }
-            addAccountLog('update', `[Code接收] 重登录成功，新 code 已应用，已更新账号: ${found.name}`, found.id, found.name, { reason: 'relogin', hasNewCode: true });
-            log('系统', `[Code接收] 重登录成功，新 authCode 已刷新，账号已更新并重启: ${found.name}`, { accountId: normalizeText(found.id), accountName: normalizeText(found.name) });
+            addAccountLog('update', `[Code接收] 登录成功，新 code 已应用，已更新账号: ${found.name}`, found.id, found.name, { reason: 'relogin', hasNewCode: true });
+            log('系统', `[Code接收] 登录成功，新 authCode 已刷新，账号已更新并重启: ${found.name}`, { accountId: normalizeText(found.id), accountName: normalizeText(found.name) });
             return {
                 ok: true,
                 mode: 'account_updated',
@@ -223,18 +203,19 @@ function createReloginReminderService(options) {
         }
 
         const created = addOrUpdateAccount({
-            name: accountName || (uin ? String(uin) : '重登录账号'),
+            name: accountName || (uin ? String(uin) : ''),
             code,
-            platform: 'qq',
+            platform: resolvedPlatform,
             qq: uin || '',
             uin: uin || '',
             avatar,
+            saved: false,
         });
         const newAcc = (created.accounts || [])[created.accounts.length - 1];
         if (newAcc) {
             if (startWorker) startWorker(newAcc);
-            addAccountLog('add', `[Code接收] 重登录成功，新 code 已应用，已新增账号: ${newAcc.name}`, newAcc.id, newAcc.name, { reason: 'relogin', hasNewCode: true });
-            log('系统', `重登录成功，已新增账号并启动: ${newAcc.name}`, { accountId: normalizeText(newAcc.id), accountName: normalizeText(newAcc.name) });
+            addAccountLog('add', `[Code接收] 登录成功，新 code 已应用，已新增账号: ${newAcc.name}`, newAcc.id, newAcc.name, { reason: 'relogin', hasNewCode: true });
+            log('系统', `登录成功，已新增账号并启动: ${newAcc.name}`, { accountId: normalizeText(newAcc.id), accountName: normalizeText(newAcc.name) });
             return {
                 ok: true,
                 mode: 'account_created',
@@ -298,7 +279,7 @@ function createReloginReminderService(options) {
                         const authCodeMask = maskCode(authCode);
                         log('系统', `[Code接收] 已获取新 authCode (${authCodeMask})，uin=${uin || '未知'}，即将刷新账号`, { accountId: normalizeText(accountId), accountName: normalizeText(accountName) });
                         addAccountLog('update', `[Code接收] 已获取新 code (authCode)，uin=${uin || '未知'}，正在更新登录状态`, normalizeText(accountId), displayName, { reason: 'code_receive', hasAuthCode: !!authCode });
-                        applyReloginCode({ accountId, accountName, authCode, uin });
+                        applyReloginCode({ accountId, accountName, authCode, uin, platform: 'qq' });
                         stop();
                         return;
                     }
@@ -314,7 +295,7 @@ function createReloginReminderService(options) {
         return true;
     }
 
-    async function handleReceivedCode({ code = '', authCode = '', loginCode = '', ticket = '', accountId = '', accountName = '', uin = '' } = {}) {
+    async function handleReceivedCode({ code = '', authCode = '', loginCode = '', ticket = '', accountId = '', accountName = '', uin = '', platform = '' } = {}) {
         const directAuthCode = normalizeText(authCode);
         const directLoginCode = normalizeText(loginCode);
         const directTicket = normalizeText(ticket);
@@ -322,6 +303,7 @@ function createReloginReminderService(options) {
         const resolvedAccountId = normalizeText(accountId);
         const resolvedAccountName = normalizeText(accountName);
         const resolvedUin = normalizeText(uin);
+        const resolvedPlatform = normalizePlatform(platform);
         const currentAccountsData = getAccounts();
         const currentAccounts = Array.isArray(currentAccountsData.accounts) ? currentAccountsData.accounts : [];
         const preMatchedAccount = resolveReloginTarget(currentAccounts, { accountId: resolvedAccountId, accountName: resolvedAccountName, uin: resolvedUin });
@@ -332,17 +314,17 @@ function createReloginReminderService(options) {
         if (directTicket) {
             const freshAuthCode = await miniProgramLoginSession.getAuthCode(directTicket, '1112386029');
             if (freshAuthCode) {
-                return applyReloginCode({ accountId: scopedAccountId, accountName: scopedAccountName, authCode: freshAuthCode, uin: resolvedUin });
+                return applyReloginCode({ accountId: scopedAccountId, accountName: scopedAccountName, authCode: freshAuthCode, uin: resolvedUin, platform: resolvedPlatform });
             }
             throw new Error('ticket 存在，但未换取到 authCode');
         }
 
         if (directAuthCode) {
-            return applyReloginCode({ accountId: scopedAccountId, accountName: scopedAccountName, authCode: directAuthCode, uin: resolvedUin });
+            return applyReloginCode({ accountId: scopedAccountId, accountName: scopedAccountName, authCode: directAuthCode, uin: resolvedUin, platform: resolvedPlatform });
         }
 
         const loginCandidate = directLoginCode || rawCode;
-        if (loginCandidate) {
+        if (loginCandidate && (!resolvedPlatform || resolvedPlatform === 'qq')) {
             try {
                 const status = await miniProgramLoginSession.queryStatus(loginCandidate);
                 if (status && status.status === 'OK') {
@@ -355,7 +337,7 @@ function createReloginReminderService(options) {
                     if (!freshAuthCode) {
                         throw new Error('loginCode 已确认，但未换取到 authCode');
                     }
-                    return applyReloginCode({ accountId: scopedAccountId, accountName: scopedAccountName, authCode: freshAuthCode, uin: freshUin });
+                    return applyReloginCode({ accountId: scopedAccountId, accountName: scopedAccountName, authCode: freshAuthCode, uin: freshUin, platform: resolvedPlatform || 'qq' });
                 }
 
                 if (status && status.status === 'Wait') {
@@ -385,7 +367,7 @@ function createReloginReminderService(options) {
 
         const fallbackCode = rawCode || directLoginCode;
         if (fallbackCode) {
-            return applyReloginCode({ accountId: scopedAccountId, accountName: scopedAccountName, authCode: fallbackCode, uin: resolvedUin });
+            return applyReloginCode({ accountId: scopedAccountId, accountName: scopedAccountName, authCode: fallbackCode, uin: resolvedUin, platform: resolvedPlatform });
         }
 
         throw new Error('缺少 code');

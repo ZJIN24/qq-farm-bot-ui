@@ -130,6 +130,23 @@ const displayName = computed(() => {
   return getAccountDisplayName(currentAccount.value || undefined, status.value?.status?.name)
 })
 
+const currentAccountIndex = computed(() => {
+  const currentId = String(currentAccount.value?.id || '')
+  if (!currentId)
+    return -1
+  return accounts.value.findIndex(acc => String(acc?.id || '') === currentId)
+})
+
+function getAccountSubLabel(acc: any, index = -1) {
+  const uin = String(acc?.uin || acc?.qq || '').trim()
+  if (uin)
+    return uin
+  if (index >= 0)
+    return `#${index + 1}`
+  const fallbackIndex = accounts.value.findIndex(item => String(item?.id || '') === String(acc?.id || ''))
+  return fallbackIndex >= 0 ? `#${fallbackIndex + 1}` : ''
+}
+
 const connectionStatus = computed(() => {
   if (!systemConnected.value) {
     return {
@@ -238,7 +255,7 @@ watch(
                   {{ platform }}
                 </span>
                 <span class="truncate text-xs text-gray-400">
-                  {{ currentAccount?.uin || currentAccount?.id || '未选择' }}
+                  {{ currentAccount ? (getAccountSubLabel(currentAccount, currentAccountIndex) || '未选择') : '未选择' }}
                 </span>
               </div>
             </div>
@@ -257,7 +274,7 @@ watch(
           <div class="custom-scrollbar max-h-60 overflow-y-auto">
             <template v-if="accounts.length > 0">
               <button
-                v-for="acc in accounts"
+                v-for="(acc, index) in accounts"
                 :key="acc.id || acc.uin"
                 class="w-full flex items-center gap-3 px-4 py-2 transition-colors hover:bg-gray-50 dark:hover:bg-gray-700/50"
                 :class="{ 'bg-green-50 dark:bg-green-900/10': currentAccount?.id === acc.id }"
@@ -278,13 +295,13 @@ watch(
                   </span>
                   <div class="flex items-center gap-1.5">
                     <span
-                      v-if="platform"
+                      v-if="acc.platform"
                       class="rounded px-1 py-0.2 text-[10px] font-medium leading-tight"
                       :class="getPlatformClass(acc.platform)"
                     >
                       {{ getPlatformLabel(acc.platform) }}
                     </span>
-                    <span class="text-xs text-gray-400">{{ acc.uin || acc.id }}</span>
+                    <span v-if="getAccountSubLabel(acc, index)" class="text-xs text-gray-400">{{ getAccountSubLabel(acc, index) }}</span>
                   </div>
                 </div>
                 <div class="flex items-center gap-1">

@@ -31,6 +31,7 @@ const DEFAULT_FERTILIZER_BY_LAND_LEVEL = {
     black: 'none',
     gold: 'none',
 };
+const TEMP_ACCOUNT_PRUNE_MS = 30000;
 // ============ 全局配置 ============
 const DEFAULT_ACCOUNT_CONFIG = {
     automation: {
@@ -563,10 +564,108 @@ function setOfflineReminder(cfg) {
 }
 
 // ============ 账号管理 ============
+function normalizeAccountText(value) {
+    return value === undefined || value === null ? '' : String(value).trim();
+}
+
+function normalizeAccountPlatform(value, fallback = 'qq') {
+    const text = normalizeAccountText(value).toLowerCase();
+    if (text === 'qq' || text === 'wx') return text;
+    return fallback;
+}
+
+function isAutoNamedAccount(name, accountId = '') {
+    const text = normalizeAccountText(name);
+    if (!text) return true;
+    if (/^账号\d+$/.test(text)) return true;
+    if (normalizeAccountText(accountId) && text === normalizeAccountText(accountId)) return true;
+    return text === '重登录账号' || text === '微信重登录账号';
+}
+
+function inferAccountSaved(account) {
+    if (account && account.saved !== undefined) return !!account.saved;
+    const avatar = normalizeAccountText(account && (account.avatar || account.avatarUrl));
+    const loginType = normalizeAccountText(account && account.loginType).toLowerCase();
+    if (avatar) return true;
+    if (loginType === 'manual') return true;
+    if (!isAutoNamedAccount(account && account.name, account && account.id)) return true;
+    return false;
+}
+
+function normalizeAccountRecord(account = {}, fallbackId = '') {
+    const src = account && typeof account === 'object' ? account : {};
+    const id = normalizeAccountText(src.id) || normalizeAccountText(fallbackId);
+    const avatar = normalizeAccountText(src.avatar || src.avatarUrl);
+    const uin = normalizeAccountText(src.uin);
+    const qq = normalizeAccountText(src.qq) || uin;
+    const createdAt = Number(src.createdAt) || Date.now();
+    const updatedAt = Number(src.updatedAt) || createdAt;
+    return {
+        ...src,
+        id,
+        name: normalizeAccountText(src.name),
+        code: normalizeAccountText(src.code),
+        platform: normalizeAccountPlatform(src.platform, 'qq'),
+        uin,
+        qq,
+        gid: normalizeAccountText(src.gid),
+        avatar,
+        nick: normalizeAccountText(src.nick),
+        loginType: normalizeAccountText(src.loginType),
+        saved: inferAccountSaved(src),
+        createdAt,
+        updatedAt,
+    };
+}
+
+function shouldPruneTransientAccount(account, nowMs = Date.now()) {
+    if (!account || account.saved) return false;
+    if (normalizeAccountText(account.avatar)) return false;
+    const activeAt = Math.max(Number(account.updatedAt) || 0, Number(account.createdAt) || 0);
+    if (!activeAt) return false;
+    return nowMs - activeAt >= TEMP_ACCOUNT_PRUNE_MS;
+}
+
+function reindexAutoNamedAccounts(accounts = []) {
+    return accounts.map((account, index) => {
+        if (!isAutoNamedAccount(account && account.name, account && account.id)) return account;
+        return {
+            ...account,
+            name: `账号${index + 1}`,
+        };
+    });
+}
+
+function normalizeAccountsData(raw) {
+    const data = raw && typeof raw === 'object' ? raw : {};
+    const sourceAccounts = Array.isArray(data.accounts) ? data.accounts : [];
+    const nowMs = Date.now();
+    let accounts = sourceAccounts
+        .map((account, index) => normalizeAccountRecord(account, String(index + 1)))
+        .filter(account => !!account.id)
+        .filter(account => !shouldPruneTransientAccount(account, nowMs));
+    accounts = reindexAutoNamedAccounts(accounts);
+
+    const maxId = accounts.reduce((m, a) => Math.max(m, Number.parseInt(a && a.id, 10) || 0), 0);
+    let nextId = Number.parseInt(data.nextId, 10);
+    if (!Number.isFinite(nextId) || nextId <= 0) nextId = maxId + 1;
+    if (accounts.length === 0) nextId = 1;
+    if (nextId <= maxId) nextId = maxId + 1;
+    return { accounts, nextId };
+}
+
 function loadAccounts() {
     ensureDataDir();
-    const data = readJsonFile(ACCOUNTS_FILE, () => ({ accounts: [], nextId: 1 }));
-    return normalizeAccountsData(data);
+    const raw = readJsonFile(ACCOUNTS_FILE, () => ({ accounts: [], nextId: 1 }));
+    const normalized = normalizeAccountsData(raw);
+    try {
+        if (JSON.stringify(raw || {}) !== JSON.stringify(normalized)) {
+            writeJsonFileAtomic(ACCOUNTS_FILE, normalized);
+        }
+    } catch {
+        // ignore normalize persist errors on read path
+    }
+    return normalized;
 }
 
 function saveAccounts(data) {
@@ -578,40 +677,57 @@ function getAccounts() {
     return loadAccounts();
 }
 
-function normalizeAccountsData(raw) {
-    const data = raw && typeof raw === 'object' ? raw : {};
-    const accounts = Array.isArray(data.accounts) ? data.accounts : [];
-    const maxId = accounts.reduce((m, a) => Math.max(m, Number.parseInt(a && a.id, 10) || 0), 0);
-    let nextId = Number.parseInt(data.nextId, 10);
-    if (!Number.isFinite(nextId) || nextId <= 0) nextId = maxId + 1;
-    if (accounts.length === 0) nextId = 1;
-    if (nextId <= maxId) nextId = maxId + 1;
-    return { accounts, nextId };
-}
-
 function addOrUpdateAccount(acc) {
     const data = normalizeAccountsData(loadAccounts());
+    const payload = (acc && typeof acc === 'object') ? { ...acc } : {};
     let touchedAccountId = '';
-    if (acc.id) {
-        const idx = data.accounts.findIndex(a => a.id === acc.id);
+
+    if (payload.name !== undefined && payload.name !== null) payload.name = String(payload.name).trim();
+    if (payload.code !== undefined && payload.code !== null) payload.code = String(payload.code).trim();
+    if (payload.uin !== undefined && payload.uin !== null) payload.uin = String(payload.uin).trim();
+    if (payload.qq !== undefined && payload.qq !== null) payload.qq = String(payload.qq).trim();
+    if (payload.gid !== undefined && payload.gid !== null) payload.gid = String(payload.gid).trim();
+    if (payload.avatarUrl !== undefined && !payload.avatar) payload.avatar = payload.avatarUrl;
+    if (payload.avatar !== undefined && payload.avatar !== null) payload.avatar = String(payload.avatar).trim();
+    if (payload.platform !== undefined && payload.platform !== null) {
+        const normalizedPlatform = String(payload.platform).trim().toLowerCase();
+        if (normalizedPlatform === 'qq' || normalizedPlatform === 'wx') payload.platform = normalizedPlatform;
+        else delete payload.platform;
+    }
+    if (payload.saved !== undefined) payload.saved = !!payload.saved;
+
+    if (payload.id) {
+        const targetId = String(payload.id);
+        const idx = data.accounts.findIndex(a => a.id === targetId);
         if (idx >= 0) {
-            data.accounts[idx] = { ...data.accounts[idx], ...acc, name: acc.name !== undefined ? acc.name : data.accounts[idx].name, updatedAt: Date.now() };
+            const current = data.accounts[idx] || {};
+            data.accounts[idx] = normalizeAccountRecord({
+                ...current,
+                ...payload,
+                id: targetId,
+                name: payload.name !== undefined ? payload.name : current.name,
+                updatedAt: Date.now(),
+            }, targetId);
             touchedAccountId = String(data.accounts[idx].id || '');
         }
     } else {
         const id = data.nextId++;
         touchedAccountId = String(id);
-        data.accounts.push({
+        data.accounts.push(normalizeAccountRecord({
             id: touchedAccountId,
-            name: acc.name || `账号${id}`,
-            code: acc.code || '',
-            platform: acc.platform || 'qq',
-            uin: acc.uin ? String(acc.uin) : '',
-            qq: acc.qq ? String(acc.qq) : (acc.uin ? String(acc.uin) : ''),
-            avatar: acc.avatar || acc.avatarUrl || '',
+            name: payload.name || `账号${id}`,
+            code: payload.code || '',
+            platform: payload.platform || 'qq',
+            uin: payload.uin || '',
+            qq: payload.qq || payload.uin || '',
+            gid: payload.gid || '',
+            avatar: payload.avatar || '',
+            nick: payload.nick || '',
+            loginType: payload.loginType || '',
+            saved: payload.saved !== undefined ? !!payload.saved : true,
             createdAt: Date.now(),
             updatedAt: Date.now(),
-        });
+        }, touchedAccountId));
     }
     saveAccounts(data);
     if (touchedAccountId) {

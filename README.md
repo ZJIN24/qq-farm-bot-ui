@@ -1,8 +1,45 @@
 # QQ 农场多账号挂机 + Web 面板
 
-基于 Node.js 的 QQ 农场自动化工具，支持多账号管理、Web 控制面板、实时日志与数据分析。
+基于 Node.js 的 QQ 农场自动化工具，提供多账号管理、自动巡查、Web 控制面板、实时日志与数据分析能力。
 
-qq农场游戏交流群：1090049575
+
+## 主要功能
+
+### 多账号管理
+- 支持账号新增、编辑、删除、启动、停止、保存
+- 支持二维码登录、手动输入 Code、手机转发抓包中的 Code 登录
+- 支持根据 `/api/code/receive` 中的 `platform` 自动识别 `qq` / `wx`
+- 收到新的登录 Code 后，会尽量复用同一账号并合并重复账号数据
+- 已保存账号掉线后不会自动删除，临时账号停止后可直接清理
+- 账号列表支持动态编号、备注、昵称、头像展示
+
+### 自动化巡查
+- 农场自动收获、种植、浇水、除草、除虫、铲除枯株
+- 支持按土地等级分别设置施肥策略
+- 支持自动出售果实、自动开礼包、自动领取邮箱与任务奖励
+- 好友支持自动偷菜、自动帮忙、自动捣乱
+- 支持好友黑名单与静默时段，减少不想要的好友操作
+- 支持默认策略模板，新登录账号可自动继承常用配置
+
+### Web 面板
+- 提供概览、农场、背包、好友、账号、设置、分析等页面
+- 实时显示运行状态、等级、经验进度、今日统计、下次巡查倒计时
+- 支持按账号查看日志，账号日志与系统日志分开维护
+- 支持实时日志推送与 HTTP 回退刷新
+- 支持深色 / 浅色主题切换，移动端可直接访问
+
+### 下线提醒与接码能力
+- 支持离线提醒、二维码提醒、登录链接推送
+- 支持 Webhook、Bark 及 `pushoo` 支持的其他渠道
+- 支持测试推送接口
+- 支持在服务器监听手机转发的登录包并提取其中的 Code
+
+### 数据分析
+- 作物分析支持按经验效率、净利润效率、等级要求等维度排序
+- 背包页可查看主要物品与库存统计
+- 首页展示化肥、典藏、经验速度等关键指标
+
+---
 
 ## 技术栈
 
@@ -28,205 +65,229 @@ qq农场游戏交流群：1090049575
 
 ---
 
-## 项目贡献
+## 运行环境
 
-克隆仓库并切换到pr分支进行修改，提交拉取请求的时候也是合并到pr分支，这么做是因为我没有太多时间单独审pr，把所有pr合并到一个分支过一段时间再一起审更方便，当我确认没有问题时就和连同新版本更新一起合并到主分支
+- Node.js `20+`
+- pnpm `10+`（推荐执行 `corepack enable`）
+- Docker / Docker Compose（如果使用容器部署）
 
-## 功能特性
-
-### 多账号管理
-- 账号新增、编辑、删除、启动、停止
-- 扫码登录（QQ）与手动输入 Code
-- 账号被踢下线自动删除
-- 账号连续离线超时自动删除
-- 账号离线推送通知（支持 Bark、自定义 Webhook 等）
-
-### 自动化能力
-- 农场：收获、种植、浇水、除草、除虫、铲除、土地升级
-- 仓库：收获后自动出售果实
-- 好友：自动偷菜 / 帮忙 / 捣乱
-- 任务：自动检查并领取
-- 好友黑名单：跳过指定好友
-- 静默时段：指定时间段内不执行好友操作
-
-### Web 面板
-- 概览 / 农场 / 背包 / 好友 / 分析 / 账号 / 设置页面
-- 实时日志，支持按账号、模块、事件、级别、关键词、时间范围筛选
-- 深色 / 浅色主题切换
-
-### 分析页
-支持按以下维度排序作物：
-- 经验效率 / 普通肥经验效率
-- 净利润效率 / 普通肥净利润效率
-- 等级要求
+当前核心版本：`2.0.4`
 
 ---
 
-## 环境要求
+## 快速开始
 
-- 源码运行：Node.js 20+，pnpm（推荐通过 `corepack enable` 启用）
-- 二进制发布版：无需安装 Node.js
-
-## 安装与启动（源码方式）
-
-### Windows
-
-```powershell
-# 1. 安装 Node.js 20+（https://nodejs.org/）并启用 pnpm
-node -v
-corepack enable
-pnpm -v
-
-# 2. 安装依赖并构建前端
-cd D:\Projects\qq-farm-bot-ui
-pnpm install
-pnpm build:web
-
-# 3. 启动
-pnpm dev:core
-
-# （可选）设置管理密码后启动
-$env:ADMIN_PASSWORD="你的强密码"
-pnpm dev:core
-```
-
-### Linux（Ubuntu/Debian）
+### 方式一：源码运行
 
 ```bash
-# 1. 安装 Node.js 20+
-sudo apt update && sudo apt install -y curl
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt install -y nodejs
 corepack enable
-
-# 2. 安装依赖并构建前端
-cd /path/to/qq-farm-bot-ui
 pnpm install
 pnpm build:web
-
-# 3. 启动
 pnpm dev:core
-
-# （可选）设置管理密码后启动
-ADMIN_PASSWORD='你的强密码' pnpm dev:core
 ```
 
-启动后访问面板：
+启动后访问：
 - 本机：`http://localhost:3000`
-- 局域网：`http://<你的IP>:3000`
+- 局域网：`http://<你的服务器IP>:3000`
+
+### 方式二：一条命令启动
+
+```bash
+corepack enable
+pnpm install
+pnpm dev
+```
+
+这个命令会先构建前端，再启动后端服务。
 
 ---
 
 ## Docker 部署
 
+项目当前使用的是 `docker-compose` 风格配置，默认端口为 `3000`。
+
 ```bash
 # 构建并后台启动
-docker compose up -d --build
+docker-compose up -d --build
 
 # 查看日志
-docker compose logs -f
+docker-compose logs -f
+
+# 重启服务
+docker-compose up -d --build
 
 # 停止并移除容器
-docker compose down
+docker-compose down
 ```
 
 ### 数据持久化
 
-`docker-compose.yml` 已将数据目录挂载：
+`docker-compose.yml` 已将数据目录挂载到容器内：
 
 | 宿主机路径 | 容器内路径 |
-|-----------|-----------|
-| `./data`  | `/app/core/data` |
+| --- | --- |
+| `./data` | `/app/core/data` |
 
-账号与配置数据保存在 `./data/accounts.json` 和 `./data/store.json`。
+常见数据文件：
+- `data/accounts.json`：账号列表、账号配置、保存状态
+- `data/store.json`：全局配置、默认策略、下线提醒等
 
-### 设置管理密码
+### 管理密码
 
-在 `docker-compose.yml` 的 `environment` 中配置：
+默认管理密码为 `admin`，建议部署后立即修改。
+
+也可以在 `docker-compose.yml` 中直接配置：
 
 ```yaml
 environment:
   ADMIN_PASSWORD: 你的强密码
+  TZ: Asia/Shanghai
 ```
 
-修改后执行 `docker compose up -d` 重启生效。
+修改后重新执行：
+
+```bash
+docker-compose up -d --build
+```
 
 ---
 
-## 二进制发布版（无需 Node.js）
+## 登录方式
 
-### 构建
+### 面板内登录
+- 手动输入登录 Code
+
+### 手机转发 Code 登录
+重定向包含code的包到
+http://服务器公网ip:3000/api/code/receive
+
+把请求转发到你的服务器即可。服务端会：
+- 解析 `code`
+- 根据 `platform` 判断是 QQ 还是微信
+- 尝试匹配现有账号
+- 同步原账号配置
+- 合并重复账号并保留可用数据
+
+适合放在代理工具、抓包转发规则或自定义脚本里使用。
+
+---
+
+## 功能说明
+
+### 账号保存机制
+- `保存`：保留当前账号的偷菜、种植、施肥等配置；掉线后不自动删除
+- `停止`：已保存账号只停止运行，不删数据
+- `删除`：临时账号停止后可直接清掉，适合一次性登录测试
+
+### 默认策略
+在设置页可以把当前账号配置设为默认策略。之后新登录账号会自动继承这些内容：
+- 种植策略
+- 施肥策略
+- 巡视与好友策略
+- 静默时段等自动化设置
+
+### 日志系统
+- 系统日志和账号日志分开维护
+- 首页支持按模块、事件、级别筛选
+- 支持实时推送，断开后自动回退为接口拉取
+- 最新收到的 Code 会在日志区上方提示
+
+### 推送提醒
+下线提醒支持多种渠道，常用包括：
+- `webhook`
+- `bark`
+- `qmsg`
+- `serverchan`
+- `pushplus`
+- 以及 `pushoo` 支持的其他渠道
+
+---
+
+## 常用命令
+
+```bash
+# 启动后端
+pnpm dev:core
+
+# 启动前端开发模式
+pnpm dev:web
+
+# 构建前端
+pnpm build:web
+
+# 代码检查
+pnpm lint
+
+# 打包所有发布版
+pnpm package:release
+```
+
+---
+
+## 二进制发布版
+
+如果你不想安装 Node.js，也可以自行打包发布版：
 
 ```bash
 pnpm install
 pnpm package:release
 ```
 
-产物输出在 `dist/` 目录：
+产物输出在 `core/dist/` 目录。
 
-| 平台 | 文件名 |
-|------|--------|
-| Windows x64 | `qq-farm-bot-win-x64.exe` |
-| Linux x64 | `qq-farm-bot-linux-x64` |
-| macOS Intel | `qq-farm-bot-macos-x64` |
-| macOS Apple Silicon | `qq-farm-bot-macos-arm64` |
-
-### 运行
-
-```bash
-# Windows：双击 exe 或在终端执行
-.\qq-farm-bot-win-x64.exe
-
-# Linux / macOS
-chmod +x ./qq-farm-bot-linux-x64 && ./qq-farm-bot-linux-x64
-```
-
-程序会在可执行文件同级目录自动创建 `data/` 并写入 `store.json`、`accounts.json`。
-
----
-
-## 登录与安全
-
-- 面板首次访问需要登录
-- 默认管理密码：`admin`
-- **建议部署后立即修改为强密码**
+可执行文件运行后，会在程序同级目录附近创建并使用自己的数据目录，保存账号与配置数据。
 
 ---
 
 ## 项目结构
 
-```
+```text
 qq-farm-bot-ui/
-├── core/                  # 后端（Node.js 机器人引擎）
+├── core/                  # 后端服务与机器人核心
 │   ├── src/
-│   │   ├── config/        # 配置管理
-│   │   ├── controllers/   # HTTP API
+│   │   ├── config/        # 游戏配置与静态资源映射
+│   │   ├── controllers/   # HTTP API 与后台接口
+│   │   ├── core/          # Worker 与实际巡查执行逻辑
 │   │   ├── gameConfig/    # 游戏静态数据
-│   │   ├── models/        # 数据模型与持久化
-│   │   ├── proto/         # Protobuf 协议定义
-│   │   ├── runtime/       # 运行时引擎与 Worker 管理
-│   │   └── services/      # 业务逻辑（农场、好友、任务等）
-│   ├── data/              # 运行时数据（accounts.json、store.json）
-│   └── client.js          # 主进程入口
-├── web/                   # 前端（Vue 3 + Vite）
+│   │   ├── models/        # 数据持久化与状态存储
+│   │   ├── runtime/       # 运行时引擎、日志、重登录管理
+│   │   ├── services/      # 农场、好友、任务、仓库等业务逻辑
+│   │   └── utils/         # 网络、协议、工具函数
+│   ├── client.js          # 后端入口
+│   └── Dockerfile         # 容器构建文件
+├── web/                   # Vue 3 前端面板
 │   ├── src/
-│   │   ├── api/           # API 客户端
-│   │   ├── components/    # Vue 组件
+│   │   ├── api/           # API 封装
+│   │   ├── components/    # 页面与通用组件
 │   │   ├── stores/        # Pinia 状态管理
-│   │   └── views/         # 页面视图
-│   └── dist/              # 构建产物
-├── docker-compose.yml
-├── pnpm-workspace.yaml
-└── package.json
+│   │   └── views/         # 各功能页面
+│   └── dist/              # 前端构建产物
+├── data/                  # Docker 挂载后的运行数据目录
+├── docker-compose.yml     # 容器部署配置
+├── pnpm-workspace.yaml    # pnpm 工作区配置
+└── README.md
 ```
+
+如需更细的代码结构说明，可查看 `CODE_STRUCTURE.md`。
+
+---
+
+## 贡献说明
+
+欢迎提交问题反馈与改进建议。
+
+如果你要提交代码修改，建议：
+- 先同步最新代码
+- 在自己的分支完成修改
+- 确保能正常启动、构建与基本功能验证
+- 再发起合并请求
 
 ---
 
 ## 特别感谢
 
-- 核心功能：[linguo2625469/qq-farm-bot](https://github.com/linguo2625469/qq-farm-bot)
-- 部分功能：[QianChenJun/qq-farm-bot](https://github.com/QianChenJun/qq-farm-bot)
-- 扫码登录：[lkeme/QRLib](https://github.com/lkeme/QRLib)
+- 核心功能参考：[linguo2625469/qq-farm-bot](https://github.com/linguo2625469/qq-farm-bot)
+- 部分功能参考：[QianChenJun/qq-farm-bot](https://github.com/QianChenJun/qq-farm-bot)
 
 ## 免责声明
 

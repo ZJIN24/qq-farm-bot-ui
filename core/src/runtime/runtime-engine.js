@@ -41,17 +41,57 @@ function createRuntimeEngine(options = {}) {
     filterLogs,
   } = runtimeState
 
+  function normalizeAccountText(value) {
+    return String(value || '').trim()
+  }
+
+  function isGenericAccountName(name = '', accountId = '') {
+    const text = normalizeAccountText(name)
+    if (!text) return true
+    if (normalizeAccountText(accountId) && text === normalizeAccountText(accountId)) return true
+    return /^账号\d+$/.test(text)
+  }
+
   function mergeRuntimeAccounts({ sourceAccountId = '', targetAccountId = '', targetAccountName = '' } = {}) {
-    const sourceId = String(sourceAccountId || '').trim()
-    const targetId = String(targetAccountId || '').trim()
+    const sourceId = normalizeAccountText(sourceAccountId)
+    const targetId = normalizeAccountText(targetAccountId)
     if (!sourceId || !targetId || sourceId === targetId)
       return false
 
     const accountsData = store.getAccounts ? store.getAccounts() : { accounts: [] }
     const accounts = Array.isArray(accountsData.accounts) ? accountsData.accounts : []
-    const sourceAccount = accounts.find(acc => String(acc && acc.id || '') === sourceId) || null
-    const targetAccount = accounts.find(acc => String(acc && acc.id || '') === targetId) || null
-    const nextTargetName = String(targetAccountName || (targetAccount && targetAccount.name) || targetId).trim()
+    const sourceAccount = accounts.find(acc => normalizeAccountText(acc && acc.id) === sourceId) || null
+    const targetAccount = accounts.find(acc => normalizeAccountText(acc && acc.id) === targetId) || null
+
+    const preferredTargetName = isGenericAccountName(targetAccount && targetAccount.name, targetId)
+      ? normalizeAccountText((sourceAccount && sourceAccount.name) || targetAccountName || (targetAccount && targetAccount.name) || targetId)
+      : normalizeAccountText(targetAccountName || (targetAccount && targetAccount.name) || targetId)
+    const nextTargetName = preferredTargetName || targetId
+
+    const sourceSnapshot = store.getConfigSnapshot ? store.getConfigSnapshot(sourceId) : null
+    if (sourceSnapshot && store.applyConfigSnapshot) {
+      store.applyConfigSnapshot({
+        automation: sourceSnapshot.automation,
+        fertilizerByLandLevel: sourceSnapshot.fertilizerByLandLevel,
+        plantingStrategy: sourceSnapshot.plantingStrategy,
+        preferredSeedId: sourceSnapshot.preferredSeedId,
+        intervals: sourceSnapshot.intervals,
+        friendQuietHours: sourceSnapshot.friendQuietHours,
+        friendBlacklist: sourceSnapshot.friendBlacklist,
+      }, { accountId: targetId })
+    }
+
+    const mergePatch = { id: targetId }
+    if (nextTargetName && normalizeAccountText(targetAccount && targetAccount.name) !== nextTargetName) mergePatch.name = nextTargetName
+    const mergedPlatform = normalizeAccountText((targetAccount && targetAccount.platform) || (sourceAccount && sourceAccount.platform)).toLowerCase()
+    if (mergedPlatform === 'qq' || mergedPlatform === 'wx') mergePatch.platform = mergedPlatform
+    if (!(targetAccount && targetAccount.uin) && sourceAccount && sourceAccount.uin) mergePatch.uin = sourceAccount.uin
+    if (!(targetAccount && targetAccount.qq) && sourceAccount && sourceAccount.qq) mergePatch.qq = sourceAccount.qq
+    if (!(targetAccount && targetAccount.gid) && sourceAccount && sourceAccount.gid) mergePatch.gid = sourceAccount.gid
+    if (!(targetAccount && targetAccount.avatar) && sourceAccount && sourceAccount.avatar) mergePatch.avatar = sourceAccount.avatar
+    if (!(targetAccount && targetAccount.nick) && sourceAccount && sourceAccount.nick) mergePatch.nick = sourceAccount.nick
+    if (!!(sourceAccount && sourceAccount.saved) && !(targetAccount && targetAccount.saved)) mergePatch.saved = true
+    store.addOrUpdateAccount(mergePatch)
 
     for (const entry of GLOBAL_LOGS) {
       if (String((entry && entry.accountId) || '') !== sourceId) continue
@@ -119,6 +159,8 @@ function createRuntimeEngine(options = {}) {
     triggerOfflineReminder,
     addOrUpdateAccount: store.addOrUpdateAccount,
     deleteAccount: store.deleteAccount,
+    getAccounts: store.getAccounts,
+    mergeAccounts: mergeRuntimeAccounts,
     upsertFriendBlacklist: (accountId, gid) => {
       const id = String(accountId || '').trim()
       const friendGid = Number(gid)

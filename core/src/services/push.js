@@ -46,7 +46,19 @@ async function sendPushooMessage(payload = {}) {
     const hasError = !!(raw && raw.error);
     const code = String(raw.code || raw.errcode || (hasError ? 'error' : 'ok'));
     const message = String(raw.msg || raw.message || (hasError ? (raw.error.message || 'push failed') : 'ok'));
-    const ok = !hasError && (code === 'ok' || code === '0' || code === '' || String(raw.status || '').toLowerCase() === 'success');
+    const statusText = String(raw.status || '').toLowerCase();
+    const payloadText = String(raw.data || raw.result || '').trim().toLowerCase();
+    const messageText = message.trim().toLowerCase();
+    const ok = !hasError && (
+        code === 'ok'
+        || code === '0'
+        || code === ''
+        || statusText === 'success'
+        || messageText === 'success'
+        || messageText === 'ok'
+        || payloadText === 'success'
+        || payloadText === 'ok'
+    );
 
     return {
         ok,

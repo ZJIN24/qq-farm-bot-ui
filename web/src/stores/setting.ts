@@ -155,6 +155,31 @@ export const useSettingStore = defineStore('setting', () => {
     }
   }
 
+  async function saveDefaultSettings(newSettings: any) {
+    loading.value = true
+    try {
+      const settingsPayload = {
+        plantingStrategy: newSettings.plantingStrategy,
+        preferredSeedId: newSettings.preferredSeedId,
+        intervals: newSettings.intervals,
+        friendQuietHours: newSettings.friendQuietHours,
+        fertilizerByLandLevel: newSettings.fertilizerByLandLevel,
+        automation: newSettings.automation,
+      }
+
+      const { data } = await api.post('/api/settings/default', settingsPayload)
+      if (data && data.ok)
+        return { ok: true, data: data.data }
+      return { ok: false, error: data?.error || '保存失败' }
+    }
+    catch (e: any) {
+      return { ok: false, error: e?.response?.data?.error || e?.message || '保存失败' }
+    }
+    finally {
+      loading.value = false
+    }
+  }
+
   async function saveOfflineConfig(config: OfflineConfig) {
     loading.value = true
     try {
@@ -181,5 +206,5 @@ export const useSettingStore = defineStore('setting', () => {
     }
   }
 
-  return { settings, loading, fetchSettings, saveSettings, saveOfflineConfig, changeAdminPassword }
+  return { settings, loading, fetchSettings, saveSettings, saveDefaultSettings, saveOfflineConfig, changeAdminPassword }
 })

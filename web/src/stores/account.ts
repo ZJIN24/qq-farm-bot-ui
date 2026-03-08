@@ -12,6 +12,7 @@ export interface Account {
   uin?: number
   platform?: string
   running?: boolean
+  saved?: boolean
   // Add other fields as discovered
 }
 
@@ -20,6 +21,8 @@ export function isGenericAccountName(name?: string, account?: Partial<Account>) 
   if (!text)
     return true
   if (/^账号\d+$/.test(text))
+    return true
+  if (text === '重登录账号' || text === '微信重登录账号')
     return true
   const accountId = String(account?.id || '').trim()
   if (accountId && text === accountId)
@@ -112,6 +115,9 @@ export const useAccountStore = defineStore('account', () => {
             currentAccountId.value = String(accounts.value[0].id)
           }
         }
+        else {
+          currentAccountId.value = ''
+        }
       }
     }
     catch (e) {
@@ -137,6 +143,11 @@ export const useAccountStore = defineStore('account', () => {
 
   async function stopAccount(id: string) {
     await api.post(`/api/accounts/${id}/stop`)
+    await fetchAccounts()
+  }
+
+  async function saveAccount(id: string) {
+    await api.post(`/api/accounts/${id}/save`)
     await fetchAccounts()
   }
 
@@ -193,6 +204,7 @@ export const useAccountStore = defineStore('account', () => {
     selectAccount,
     startAccount,
     stopAccount,
+    saveAccount,
     deleteAccount,
     fetchLogs,
     addAccount,

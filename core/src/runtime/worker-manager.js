@@ -18,6 +18,8 @@ function createWorkerManager(options) {
         triggerOfflineReminder,
         addOrUpdateAccount,
         deleteAccount,
+        getAccounts,
+        mergeAccounts,
         upsertFriendBlacklist,
         broadcastConfigToWorkers,
         onStatusSync,
@@ -33,10 +35,83 @@ function createWorkerManager(options) {
         return /^账号\d+$/.test(text);
     }
 
+    function normalizeText(value) {
+        return String(value || '').trim();
+    }
+
+    function normalizePlatform(value) {
+        const text = normalizeText(value).toLowerCase();
+        if (!text) return '';
+        if (text === 'wx' || text === 'wechat' || text === 'weixin') return 'wx';
+        if (text === 'qq') return 'qq';
+        return '';
+    }
+
+    function shouldMergeOfflineDuplicate(worker) {
+        if (!worker) return true;
+        const connected = !!(worker.status && worker.status.connection && worker.status.connection.connected);
+        const wsCode = Number(worker.wsError && worker.wsError.code) || 0;
+        return wsCode === 400 || !connected || !!worker.disconnectedSince;
+    }
+
+    function findStoredAccount(accountId) {
+        if (typeof getAccounts !== 'function') return null;
+        const data = getAccounts() || {};
+        const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+        return accounts.find(account => normalizeText(account && account.id) === normalizeText(accountId)) || null;
+    }
+
+    function isSavedAccount(accountId) {
+        const target = findStoredAccount(accountId);
+        return !!(target && target.saved);
+    }
+
+    function mergeDuplicateAccountsByIdentity(accountId, worker, identity = {}) {
+        if (typeof mergeAccounts !== 'function' || typeof getAccounts !== 'function') return;
+
+        const targetId = normalizeText(accountId);
+        const targetName = normalizeText((worker && worker.name) || targetId) || targetId;
+        const gid = normalizeText(identity.gid || (worker && worker.gid));
+        const uin = normalizeText(identity.uin || (worker && worker.uin) || (worker && worker.qq));
+        if (!targetId || (!gid && !uin)) return;
+
+        const data = getAccounts() || {};
+        const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+        const duplicates = accounts.filter((account) => {
+            const currentId = normalizeText(account && account.id);
+            if (!currentId || currentId === targetId) return false;
+            if (gid) return normalizeText(account && account.gid) === gid;
+            return normalizeText((account && (account.uin || account.qq)) || '') === uin;
+        });
+
+        for (const duplicate of duplicates) {
+            const sourceId = normalizeText(duplicate && duplicate.id);
+            if (!sourceId) continue;
+            if (!shouldMergeOfflineDuplicate(workers[sourceId])) continue;
+            try {
+                mergeAccounts({
+                    sourceAccountId: sourceId,
+                    targetAccountId: targetId,
+                    targetAccountName: targetName,
+                });
+            } catch (error) {
+                const message = error && error.message ? error.message : String(error || 'unknown');
+                log('错误', `[账号去重] 合并重复账号失败: ${message}`, {
+                    accountId: targetId,
+                    accountName: targetName,
+                    mergedFrom: sourceId,
+                });
+            }
+        }
+    }
+
     function syncAccountProfileFromStatus(accountId, worker, payload) {
         const status = (payload && payload.status && typeof payload.status === 'object') ? payload.status : {};
         const newNick = String(status.name || '').trim();
         const newAvatar = String(status.avatarUrl || status.avatar_url || '').trim();
+        const newUin = normalizeText(status.uin || status.qq);
+        const newGid = normalizeText(status.gid);
+        const newPlatform = normalizePlatform(status.platform);
         const updatePayload = { id: accountId };
         const oldNick = String(worker.nick || '').trim();
         const oldName = String(worker.name || '').trim();
@@ -63,9 +138,33 @@ function createWorkerManager(options) {
             hasUpdate = true;
         }
 
-        if (!hasUpdate) return;
+        if (newUin && normalizeText(worker.uin) !== newUin) {
+            worker.uin = newUin;
+            worker.qq = newUin;
+            updatePayload.uin = newUin;
+            updatePayload.qq = newUin;
+            hasUpdate = true;
+        }
 
-        addOrUpdateAccount(updatePayload);
+        if (newGid && normalizeText(worker.gid) !== newGid) {
+            worker.gid = newGid;
+            updatePayload.gid = newGid;
+            hasUpdate = true;
+        }
+
+        if (newPlatform && normalizeText(worker.platform) !== newPlatform) {
+            worker.platform = newPlatform;
+            updatePayload.platform = newPlatform;
+            hasUpdate = true;
+        }
+
+        if (hasUpdate) {
+            addOrUpdateAccount(updatePayload);
+        }
+
+        mergeDuplicateAccountsByIdentity(accountId, worker, { gid: newGid, uin: newUin });
+
+        if (!hasUpdate) return;
 
         if (syncedName) {
             log('系统', `已同步账号名称: ${oldName || '未命名'} -> ${worker.name}`, { accountId, accountName: worker.name });
@@ -132,6 +231,10 @@ function createWorkerManager(options) {
             name: account.name,
             nick: account.nick || '',
             avatar: account.avatar || '',
+            platform: account.platform || 'qq',
+            uin: account.uin || account.qq || '',
+            qq: account.qq || account.uin || '',
+            gid: account.gid || '',
             stopping: false,
             disconnectedSince: 0,
             autoDeleteTriggered: false,
@@ -265,27 +368,32 @@ function createWorkerManager(options) {
                 const offlineMs = now - worker.disconnectedSince;
                 const autoDeleteMs = getOfflineAutoDeleteMs();
                 if (!worker.autoDeleteTriggered && offlineMs >= autoDeleteMs) {
-                    worker.autoDeleteTriggered = true;
-                    const offlineMin = Math.floor(offlineMs / 60000);
-                    log('系统', `账号 ${worker.name} 持续离线 ${offlineMin} 分钟，自动删除账号信息`);
-                    triggerOfflineReminder({
-                        accountId,
-                        accountName: worker.name,
-                        reason: 'offline_timeout',
-                        offlineMs,
-                    });
-                    addAccountLog(
-                        'offline_delete',
-                        `账号 ${worker.name} 持续离线 ${offlineMin} 分钟，已自动删除`,
-                        accountId,
-                        worker.name,
-                        { reason: 'offline_timeout', offlineMs },
-                    );
-                    stopWorker(accountId);
-                    try {
-                        deleteAccount(accountId);
-                    } catch (e) {
-                        log('错误', `删除离线账号失败: ${e.message}`);
+                    if (isSavedAccount(accountId)) {
+                        worker.autoDeleteTriggered = true;
+                        log('系统', `账号 ${worker.name} 持续离线，但已保存，跳过自动删除`, { accountId: String(accountId), accountName: worker.name });
+                    } else {
+                        worker.autoDeleteTriggered = true;
+                        const offlineMin = Math.floor(offlineMs / 60000);
+                        log('系统', `账号 ${worker.name} 持续离线 ${offlineMin} 分钟，自动删除账号信息`);
+                        triggerOfflineReminder({
+                            accountId,
+                            accountName: worker.name,
+                            reason: 'offline_timeout',
+                            offlineMs,
+                        });
+                        addAccountLog(
+                            'offline_delete',
+                            `账号 ${worker.name} 持续离线 ${offlineMin} 分钟，已自动删除`,
+                            accountId,
+                            worker.name,
+                            { reason: 'offline_timeout', offlineMs },
+                        );
+                        stopWorker(accountId);
+                        try {
+                            deleteAccount(accountId);
+                        } catch (e) {
+                            log('错误', `删除离线账号失败: ${e.message}`);
+                        }
                     }
                 }
             }
@@ -322,6 +430,7 @@ function createWorkerManager(options) {
             }
         } else if (msg.type === 'account_kicked') {
             const reason = msg.reason || '未知';
+            const saved = isSavedAccount(accountId);
             log('系统', `账号 ${worker.name} 被踢下线，已自动停止账号`, { accountId: String(accountId), accountName: worker.name });
             triggerOfflineReminder({
                 accountId,
@@ -331,6 +440,14 @@ function createWorkerManager(options) {
             });
             addAccountLog('kickout_stop', `账号 ${worker.name} 被踢下线，已自动停止`, accountId, worker.name, { reason });
             stopWorker(accountId);
+            if (!saved) {
+                try {
+                    deleteAccount(accountId);
+                    addAccountLog('delete', `临时账号掉线后已删除: ${worker.name}`, accountId, worker.name, { reason: `kickout:${reason}` });
+                } catch (e) {
+                    log('错误', `删除掉线临时账号失败: ${e.message}`, { accountId: String(accountId), accountName: worker.name });
+                }
+            }
         } else if (msg.type === 'friend_blacklist_add') {
             const gid = Number(msg.gid);
             if (!Number.isFinite(gid) || gid <= 0) return;

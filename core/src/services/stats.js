@@ -163,6 +163,7 @@ function getStats(statusData, userState, connected, limits) {
         status: {
             name: userObj.name || statusObj.name,
             avatarUrl: userObj.avatarUrl || statusObj.avatarUrl || '',
+            gid: String(userObj.gid || statusObj.gid || '').trim(),
             level: statusObj.level || userObj.level || 0,
             gold: currentGold,
             coupon: Number.isFinite(Number(userObj.coupon)) ? Number(userObj.coupon) : 0,

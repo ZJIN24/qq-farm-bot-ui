@@ -15,6 +15,7 @@ const { accounts, loading, currentAccountId } = storeToRefs(accountStore)
 const showModal = ref(false)
 const showDeleteConfirm = ref(false)
 const deleteLoading = ref(false)
+const savingAccountId = ref('')
 const editingAccount = ref<any>(null)
 const accountToDelete = ref<any>(null)
 
@@ -69,6 +70,18 @@ async function toggleAccount(account: any) {
   }
 }
 
+async function saveAccount(account: any) {
+  if (!account?.id || account.saved || savingAccountId.value)
+    return
+  savingAccountId.value = String(account.id)
+  try {
+    await accountStore.saveAccount(String(account.id))
+  }
+  finally {
+    savingAccountId.value = ''
+  }
+}
+
 function handleSaved() {
   accountStore.fetchAccounts()
 }
@@ -115,7 +128,7 @@ function selectAccount(account: any) {
 
     <div v-else class="grid grid-cols-1 items-start gap-4 lg:grid-cols-3 sm:grid-cols-2">
       <div
-        v-for="acc in accounts"
+        v-for="(acc, index) in accounts"
         :key="acc.id"
         class="cursor-pointer border rounded-lg bg-white p-4 shadow transition-all duration-200 dark:bg-gray-800"
         :class="String(currentAccountId) === String(acc.id)
@@ -130,10 +143,15 @@ function selectAccount(account: any) {
               <div v-else class="i-carbon-user text-2xl text-gray-400" />
             </div>
             <div>
-              <h3 class="text-lg font-bold">
-                {{ getAccountDisplayName(acc) }}
-              </h3>
-              <div class="mt-0.5 flex items-center gap-1.5">
+              <div class="flex items-center gap-2">
+                <h3 class="text-lg font-bold">
+                  {{ getAccountDisplayName(acc) }}
+                </h3>
+                <span class="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500 font-medium dark:bg-gray-700 dark:text-gray-300">
+                  #{{ index + 1 }}
+                </span>
+              </div>
+              <div class="mt-0.5 flex flex-wrap items-center gap-1.5">
                 <span
                   v-if="acc.platform"
                   class="rounded px-1 py-0.2 text-[10px] font-medium leading-tight"
@@ -141,9 +159,25 @@ function selectAccount(account: any) {
                 >
                   {{ getPlatformLabel(acc.platform) }}
                 </span>
-                <span class="text-sm text-gray-500">
-                  {{ acc.uin || '未绑定' }}
+                <BaseButton
+                  v-if="!acc.saved"
+                  variant="text"
+                  size="sm"
+                  class="text-xs"
+                  :loading="savingAccountId === String(acc.id)"
+                  @click.stop="saveAccount(acc)"
+                >
+                  保存
+                </BaseButton>
+                <span
+                  v-else
+                  class="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] text-emerald-600 font-medium dark:bg-emerald-900/20 dark:text-emerald-400"
+                >
+                  已保存
                 </span>
+              </div>
+              <div v-if="acc.uin || acc.qq" class="mt-1 text-sm text-gray-500">
+                {{ acc.uin || acc.qq }}
               </div>
             </div>
           </div>
@@ -151,12 +185,12 @@ function selectAccount(account: any) {
             <BaseButton
               variant="secondary"
               size="sm"
-              class="w-20 border rounded-full shadow-sm transition-all duration-500 ease-in-out active:scale-95"
-              :class="acc.running ? 'border-red-200 bg-red-50 text-red-600 hover:bg-red-100 focus:ring-red-500 active:border-red-300 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400 dark:hover:bg-red-900/30 dark:focus:ring-red-500 dark:active:border-red-700' : 'border-green-200 bg-green-50 text-green-600 hover:bg-green-100 focus:ring-green-500 active:border-green-300 dark:border-green-800 dark:bg-green-900/20 dark:text-green-400 dark:hover:bg-green-900/30 dark:focus:ring-green-500 dark:active:border-green-700'"
+              class="w-24 border rounded-full shadow-sm transition-all duration-500 ease-in-out active:scale-95"
+              :class="acc.running ? (acc.saved ? 'border-red-200 bg-red-50 text-red-600 hover:bg-red-100 focus:ring-red-500 active:border-red-300 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400 dark:hover:bg-red-900/30 dark:focus:ring-red-500 dark:active:border-red-700' : 'border-amber-200 bg-amber-50 text-amber-600 hover:bg-amber-100 focus:ring-amber-500 active:border-amber-300 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-400 dark:hover:bg-amber-900/30 dark:focus:ring-amber-500 dark:active:border-amber-700') : 'border-green-200 bg-green-50 text-green-600 hover:bg-green-100 focus:ring-green-500 active:border-green-300 dark:border-green-800 dark:bg-green-900/20 dark:text-green-400 dark:hover:bg-green-900/30 dark:focus:ring-green-500 dark:active:border-green-700'"
               @click.stop="toggleAccount(acc)"
             >
-              <div :class="acc.running ? 'i-carbon-stop-filled' : 'i-carbon-play-filled'" class="mr-1" />
-              {{ acc.running ? '停止' : '启动' }}
+              <div :class="acc.running ? (acc.saved ? 'i-carbon-stop-filled' : 'i-carbon-trash-can') : 'i-carbon-play-filled'" class="mr-1" />
+              {{ acc.running ? (acc.saved ? '停止' : '删除') : '启动' }}
             </BaseButton>
           </div>
         </div>
