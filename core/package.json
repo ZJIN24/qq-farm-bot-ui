@@ -39,6 +39,7 @@
       "../web/dist/**/*",
       "src/gameConfig/**/*",
       "src/proto/**/*",
+      "src/utils/tsdk.wasm",
       "share.txt"
     ]
   }

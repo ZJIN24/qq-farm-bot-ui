@@ -10,6 +10,7 @@ const {
     emitRealtimeLog,
     emitRealtimeAccountLog,
 } = require('./src/controllers/admin');
+const { checkDataDirWritable } = require('./src/config/runtime-paths');
 const { createRuntimeEngine } = require('./src/runtime/runtime-engine');
 const { createModuleLogger } = require('./src/services/logger');
 const mainLogger = createModuleLogger('main');
@@ -19,6 +20,16 @@ const isWorkerProcess = process.env.FARM_WORKER === '1';
 if (isWorkerProcess) {
     require('./src/core/worker');
 } else {
+    try {
+        const dataDir = checkDataDirWritable();
+        mainLogger.info('data directory ready', { dataDir });
+    } catch (err) {
+        const message = err && err.message ? err.message : String(err);
+        mainLogger.error('data directory check failed', { error: message });
+        console.error(`[启动失败] 数据目录不可写: ${message}`);
+        process.exit(1);
+    }
+
     const runtimeEngine = createRuntimeEngine({
         processRef: process,
         mainEntryPath: __filename,

@@ -4,6 +4,9 @@ package gamepb.illustratedpb;
 
 import "corepb.proto";
 
+// ============ 图鉴服务 ============
+
+// --- 获取图鉴列表 ---
 message GetIllustratedListV2Request {
     bool refresh = 1;
     bool full = 2;
@@ -24,6 +27,7 @@ message GetIllustratedListV2Reply {
     repeated IllustratedItem items = 1;
 }
 
+// --- 领取所有图鉴奖励 ---
 message ClaimAllRewardsV2Request {
     bool only_claimable = 1;
 }
@@ -33,4 +37,5 @@ message ClaimAllRewardsV2Reply {
     repeated corepb.Item bonus_items = 4;
 }
 
+// --- 图鉴奖励红点推送 ---
 message IllustratedRewardRedDotNotifyV2 {}

@@ -11,6 +11,7 @@ const { createScheduler } = require('../services/scheduler');
 const { updateStatusFromLogin, updateStatusGold, updateStatusLevel } = require('../services/status');
 const { recordOperation } = require('../services/stats');
 const { types } = require('./proto');
+const cryptoWasm = require('./crypto-wasm');
 const { toLong, toNum, syncServerTime, log, logWarn } = require('./utils');
 
 // ============ 事件发射器 (用于推送通知) ============
@@ -48,7 +49,12 @@ function hasOwn(obj, key) {
 }
 
 // ============ 消息编解码 ============
-function encodeMsg(serviceName, methodName, bodyBytes) {
+async function encodeMsg(serviceName, methodName, bodyBytes) {
+    let finalBody = bodyBytes || Buffer.alloc(0);
+    if (finalBody.length > 0) {
+        finalBody = await cryptoWasm.encryptBuffer(finalBody);
+    }
+
     const msg = types.GateMessage.create({
         meta: {
             service_name: serviceName,
@@ -57,21 +63,39 @@ function encodeMsg(serviceName, methodName, bodyBytes) {
             client_seq: toLong(clientSeq),
             server_seq: toLong(serverSeq),
         },
-        body: bodyBytes || Buffer.alloc(0),
+        body: finalBody,
     });
     const encoded = types.GateMessage.encode(msg).finish();
     clientSeq++;
     return encoded;
 }
 
-function sendMsg(serviceName, methodName, bodyBytes, callback) {
+async function sendMsg(serviceName, methodName, bodyBytes, callback) {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
         log('系统', '[WS] 连接未打开');
+        if (callback) callback(new Error('连接未打开'));
         return false;
     }
+
     const seq = clientSeq;
-    const encoded = encodeMsg(serviceName, methodName, bodyBytes);
+    let encoded;
+    try {
+        encoded = await encodeMsg(serviceName, methodName, bodyBytes);
+    } catch (err) {
+        if (callback) callback(err);
+        return false;
+    }
+
     if (callback) pendingCallbacks.set(seq, callback);
+
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+        if (callback) {
+            pendingCallbacks.delete(seq);
+            callback(new Error('连接已在加密途中关闭'));
+        }
+        return false;
+    }
+
     ws.send(encoded);
     return true;
 }
@@ -94,16 +118,19 @@ function sendMsgAsync(serviceName, methodName, bodyBytes, timeout = 10000) {
             reject(new Error(`请求超时: ${methodName} (seq=${seq}, pending=${pending})`));
         });
 
-        const sent = sendMsg(serviceName, methodName, bodyBytes, (err, body, meta) => {
+        sendMsg(serviceName, methodName, bodyBytes, (err, body, meta) => {
             networkScheduler.clear(timeoutKey);
             if (err) reject(err);
             else resolve({ body, meta });
-        });
-
-        if (!sent) {
+        }).then((sent) => {
+            if (!sent) {
+                networkScheduler.clear(timeoutKey);
+                reject(new Error(`发送失败: ${methodName}`));
+            }
+        }).catch((err) => {
             networkScheduler.clear(timeoutKey);
-            reject(new Error(`发送失败: ${methodName}`));
-        }
+            reject(err);
+        });
     });
 }
 
@@ -305,13 +332,7 @@ function sendLogin(onLoginSuccess) {
     const body = types.LoginRequest.encode(types.LoginRequest.create({
         sharer_id: toLong(0),
         sharer_open_id: '',
-        device_info: {
-            client_version: CONFIG.clientVersion,
-            sys_software: 'iOS 26.2.1',
-            network: 'wifi',
-            memory: '7672',
-            device_id: 'iPhone X<iPhone18,3>',
-        },
+        device_info: CONFIG.device_info,
         share_cfg_id: toLong(0),
         scene_id: '1256',
         report_data: {

@@ -22,7 +22,15 @@ function getDataDir() {
 
 function ensureDataDir() {
     const dir = getDataDir();
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
+}
+
+function checkDataDirWritable() {
+    const dir = ensureDataDir();
+    const probeFile = path.join(dir, `.write-test-${process.pid}-${Date.now()}.tmp`);
+    fs.writeFileSync(probeFile, 'ok', 'utf8');
+    fs.unlinkSync(probeFile);
     return dir;
 }
 
@@ -40,5 +48,6 @@ module.exports = {
     getDataDir,
     getDataFile,
     ensureDataDir,
+    checkDataDirWritable,
     getShareFilePath,
 };

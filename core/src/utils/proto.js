@@ -151,7 +151,11 @@ async function loadProto() {
     await root.load(protoFiles, { keepCase: true });
 
     for (const [typeName, fullName] of typeMappings) {
-        types[typeName] = root.lookupType(fullName);
+        try {
+            types[typeName] = root.lookupType(fullName);
+        } catch {
+            types[typeName] = null;
+        }
     }
 
     // Proto 加载完成

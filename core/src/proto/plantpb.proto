@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package gamepb.plantpb;
 
+import "corepb.proto";
+
 // ============ 生长阶段枚举 ============
 enum PlantPhase {
     PHASE_UNKNOWN = 0;
@@ -139,7 +141,7 @@ message HarvestRequest {
 
 message HarvestReply {
     repeated LandInfo land = 1;
-    // repeated Item items = 2;     // corepb.Item
+    repeated corepb.Item items = 2;     // corepb.Item
     // repeated Item lost_items = 3;
     repeated OperationLimit operation_limits = 4;
 }
@@ -218,8 +220,8 @@ message FertilizeReply {
 
 // --- 放虫 ---
 message PutInsectsRequest {
-    int64 host_gid = 1;
-    repeated int64 land_ids = 2;
+    repeated int64 land_ids = 1;
+    int64 host_gid = 2;
 }
 
 message PutInsectsReply {
@@ -229,14 +231,16 @@ message PutInsectsReply {
 
 // --- 放草 ---
 message PutWeedsRequest {
-    int64 host_gid = 1;
-    repeated int64 land_ids = 2;
+    repeated int64 land_ids = 1;
+    int64 host_gid = 2;
 }
 
 message PutWeedsReply {
     repeated LandInfo land = 1;
     repeated OperationLimit operation_limits = 2;
 }
+
+// ============ 土地升级/解锁 ============
 
 // --- 升级土地 ---
 message UpgradeLandRequest {
@@ -250,22 +254,22 @@ message UpgradeLandReply {
 // --- 解锁土地 ---
 message UnlockLandRequest {
     int64 land_id = 1;
-    bool do_shared = 2;
+    bool do_shared = 2;  // 是否选择共享土地
 }
 
 message UnlockLandReply {
     LandInfo land = 1;
 }
 
-// --- 检查能否操作 ---
+// --- 检查操作是否可执行 ---
 message CheckCanOperateRequest {
-    int64 host_gid = 1;
-    int64 operation_id = 2;
+    int64 host_gid = 1;         // 目标农场主GID
+    int64 operation_id = 2;     // 操作类型ID
 }
 
 message CheckCanOperateReply {
-    bool can_operate = 1;
-    int64 can_steal_num = 2;
+    bool can_operate = 1;       // 是否可以操作
+    int64 can_steal_num = 2;    // 可偷取数量
 }
 
 // ============ 服务器推送通知 ============

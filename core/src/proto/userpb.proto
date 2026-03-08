@@ -107,8 +107,8 @@ message HeartbeatReply {
 message ReportArkClickRequest {
     int64 sharer_id = 1;
     string sharer_open_id = 2;
-    int64 share_cfg_id = 3;
-    string scene_id = 4;
+    string scene_id = 3;
+    int64 share_cfg_id = 4;
 }
 
 message ReportArkClickReply {

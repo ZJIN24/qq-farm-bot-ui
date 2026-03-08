@@ -4,9 +4,8 @@ const process = require('node:process');
 
 function ensureParentDir(filePath) {
     const dir = path.dirname(filePath);
-    if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-    }
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
 }
 
 function readTextFile(filePath, fallback = '') {
@@ -36,17 +35,26 @@ function writeJsonFileAtomic(filePath, data, space = 2) {
 }
 
 function writeTextFileAtomic(filePath, text = '') {
-    ensureParentDir(filePath);
-    const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+    const targetDir = ensureParentDir(filePath);
+    const tmpPath = path.join(targetDir, `${path.basename(filePath)}.${process.pid}.${Date.now()}.tmp`);
+    const content = String(text);
 
-    try {
-        fs.writeFileSync(tmpPath, String(text), 'utf8');
-        fs.renameSync(tmpPath, filePath);
-    } finally {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
         try {
-            if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
-        } catch {
-            // ignore cleanup errors
+            ensureParentDir(tmpPath);
+            fs.writeFileSync(tmpPath, content, 'utf8');
+            fs.renameSync(tmpPath, filePath);
+            return;
+        } catch (err) {
+            const isLastAttempt = attempt >= 1;
+            if (!err || err.code !== 'ENOENT' || isLastAttempt) throw err;
+            ensureParentDir(filePath);
+        } finally {
+            try {
+                if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+            } catch {
+                // ignore cleanup errors
+            }
         }
     }
 }

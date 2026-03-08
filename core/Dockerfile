@@ -57,6 +57,9 @@ COPY --from=builder /app/core ./
 # Copy built web assets
 COPY --from=builder /app/web/dist ../web/dist
 
+# Ensure writable data directory
+RUN mkdir -p /app/core/data
+
 # Expose port
 EXPOSE 3000
 

@@ -595,6 +595,13 @@ function startAdminServer(dataProvider) {
             const isUpdate = !!body.id;
             const resolvedUpdateId = isUpdate ? resolveAccId(body.id) : '';
             const payload = isUpdate ? { ...body, id: resolvedUpdateId || String(body.id) } : body;
+            if (payload && typeof payload.code === 'string') {
+                const rawCode = String(payload.code || '').trim();
+                const queryMatch = rawCode.match(/[?&]code=([^&\s#]+)/i);
+                const pathMatch = rawCode.match(/\/code\/([a-zA-Z0-9_.-]+)/i);
+                if (queryMatch && queryMatch[1]) payload.code = decodeURIComponent(queryMatch[1]);
+                else if (pathMatch && pathMatch[1]) payload.code = pathMatch[1];
+            }
             let wasRunning = false;
             if (isUpdate && provider.isAccountRunning) {
                 wasRunning = provider.isAccountRunning(payload.id);

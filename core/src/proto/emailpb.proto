@@ -4,8 +4,11 @@ package gamepb.emailpb;
 
 import "corepb.proto";
 
+// ============ 邮箱服务 ============
+
+// --- 获取邮件列表 ---
 message GetEmailListRequest {
-    int32 box_type = 1;
+    int32 box_type = 1;  // 邮箱类型 (1=收件箱, 2=系统邮件)
 }
 
 message EmailItem {
@@ -21,6 +24,7 @@ message GetEmailListReply {
     repeated EmailItem emails = 1;
 }
 
+// --- 读取邮件 ---
 message ReadEmailRequest {
     int32 box_type = 1;
     string email_id = 2;
@@ -28,6 +32,7 @@ message ReadEmailRequest {
 
 message ReadEmailReply {}
 
+// --- 领取单封邮件 ---
 message ClaimEmailRequest {
     int32 box_type = 1;
     string email_id = 2;
@@ -37,6 +42,7 @@ message ClaimEmailReply {
     repeated corepb.Item items = 1;
 }
 
+// --- 批量领取邮件 ---
 message BatchClaimEmailRequest {
     int32 box_type = 1;
     string email_id = 2;
