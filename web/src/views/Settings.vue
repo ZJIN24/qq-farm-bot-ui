@@ -23,6 +23,7 @@ const saving = ref(false)
 const passwordSaving = ref(false)
 const offlineSaving = ref(false)
 const offlineTesting = ref(false)
+const qrSaving = ref(false)
 
 const modalVisible = ref(false)
 const modalConfig = ref({
@@ -79,6 +80,9 @@ const localSettings = ref({
   },
 })
 
+const friendDisabled = computed(() => !localSettings.value.automation.friend)
+const farmDisabled = computed(() => !localSettings.value.automation.farm_manage)
+
 const localOffline = ref({
   channel: 'webhook',
   reloginUrlMode: 'none',
@@ -87,6 +91,10 @@ const localOffline = ref({
   title: '',
   msg: '',
   offlineDeleteSec: 120,
+})
+
+const localQrLogin = ref({
+  apiDomain: 'q.qq.com',
 })
 
 const passwordForm = ref({
@@ -169,6 +177,9 @@ function syncLocalSettings() {
     // Sync offline settings (global)
     if (settings.value.offlineReminder) {
       localOffline.value = JSON.parse(JSON.stringify(settings.value.offlineReminder))
+    }
+    if (settings.value.qrLogin) {
+      localQrLogin.value = JSON.parse(JSON.stringify(settings.value.qrLogin))
     }
   }
 }
@@ -254,7 +265,7 @@ const reloginUrlModeOptions = [
   { label: '不需要', value: 'none' },
   { label: '链接', value: 'qq_link' },
   { label: '二维码', value: 'qr_code' },
-  { label: '二维码+链接', value: 'all' },
+  { label: '二维码 + 链接', value: 'all' },
 ]
 
 const currentChannelDocUrl = computed(() => {
@@ -380,6 +391,21 @@ async function handleChangePassword() {
   }
 }
 
+async function handleSaveQrLogin() {
+  qrSaving.value = true
+  try {
+    const res = await settingStore.saveQrLoginConfig(localQrLogin.value)
+    if (res.ok) {
+      showAlert('二维码接口设置已保存')
+    }
+    else {
+      showAlert(`保存失败: ${res.error || '未知错误'}`, 'danger')
+    }
+  }
+  finally {
+    qrSaving.value = false
+  }
+}
 async function handleSaveOffline() {
   offlineSaving.value = true
   try {
@@ -549,17 +575,17 @@ async function handleTestOffline() {
           </div>
 
           <!-- Sub-controls -->
-          <div v-if="localSettings.automation.farm_manage" class="flex flex-wrap gap-4 rounded bg-emerald-50 p-2 text-sm dark:bg-emerald-900/20">
-            <BaseSwitch v-model="localSettings.automation.farm_water" label="自动浇水" />
-            <BaseSwitch v-model="localSettings.automation.farm_bug" label="自动除虫" />
-            <BaseSwitch v-model="localSettings.automation.farm_weed" label="自动除草" />
+          <div class="flex flex-wrap gap-4 rounded bg-emerald-50 p-2 text-sm dark:bg-emerald-900/20" :class="{ 'opacity-50 pointer-events-none': farmDisabled }">
+            <BaseSwitch v-model="localSettings.automation.farm_water" label="自动浇水" :disabled="farmDisabled" />
+            <BaseSwitch v-model="localSettings.automation.farm_bug" label="自动除虫" :disabled="farmDisabled" />
+            <BaseSwitch v-model="localSettings.automation.farm_weed" label="自动除草" :disabled="farmDisabled" />
           </div>
 
-          <div v-if="localSettings.automation.friend" class="flex flex-wrap gap-4 rounded bg-blue-50 p-2 text-sm dark:bg-blue-900/20">
-            <BaseSwitch v-model="localSettings.automation.friend_steal" label="自动偷菜" />
-            <BaseSwitch v-model="localSettings.automation.friend_help" label="自动帮忙" />
-            <BaseSwitch v-model="localSettings.automation.friend_bad" label="自动捣乱" />
-            <BaseSwitch v-model="localSettings.automation.friend_help_exp_limit" label="经验上限停止帮忙" />
+          <div class="flex flex-wrap gap-4 rounded bg-blue-50 p-2 text-sm dark:bg-blue-900/20" :class="{ 'opacity-50 pointer-events-none': friendDisabled }">
+            <BaseSwitch v-model="localSettings.automation.friend_steal" label="自动偷菜" :disabled="friendDisabled" />
+            <BaseSwitch v-model="localSettings.automation.friend_help" label="自动帮忙" :disabled="friendDisabled" />
+            <BaseSwitch v-model="localSettings.automation.friend_bad" label="自动捣乱" :disabled="friendDisabled" />
+            <BaseSwitch v-model="localSettings.automation.friend_help_exp_limit" label="经验上限停止帮忙" :disabled="friendDisabled" />
           </div>
 
           <!-- Fertilizer -->
@@ -648,6 +674,36 @@ async function handleTestOffline() {
           </div>
         </div>
 
+        <!-- QR Login Header -->
+        <div class="border-b border-t bg-gray-50/50 px-4 py-3 dark:border-gray-700 dark:bg-gray-800/50">
+          <h3 class="flex items-center gap-2 text-base text-gray-900 font-bold dark:text-gray-100">
+            <div class="i-carbon-qr-code" />
+            二维码登录接口
+          </h3>
+        </div>
+
+        <!-- QR Login Content -->
+        <div class="p-4 space-y-3">
+          <BaseInput
+            v-model="localQrLogin.apiDomain"
+            label="二维码接口域名"
+            type="text"
+            placeholder="q.qq.com"
+          />
+          <p class="text-xs text-gray-500 dark:text-gray-400">
+            仅影响后端调用二维码相关接口的域名，前端仍使用 /api/qr/create 与 /api/qr/check。
+          </p>
+          <div class="flex justify-end">
+            <BaseButton
+              variant="primary"
+              size="sm"
+              :loading="qrSaving"
+              @click="handleSaveQrLogin"
+            >
+              保存二维码接口设置
+            </BaseButton>
+          </div>
+        </div>
         <!-- Offline Header -->
         <div class="border-b border-t bg-gray-50/50 px-4 py-3 dark:border-gray-700 dark:bg-gray-800/50">
           <h3 class="flex items-center gap-2 text-base text-gray-900 font-bold dark:text-gray-100">
