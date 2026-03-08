@@ -744,7 +744,7 @@ function startAdminServer(dataProvider) {
         return '';
     }
 
-    function extractCodePayload(body = {}, query = {}) {
+    function extractCodePayload(body = {}, query = {}, headers = {}) {
         const rawText = pickFirstNonEmpty(body.url, body.text, body.content, body.raw, body.payload, body.data, query.url, query.text, query.content, query.raw);
         const payload = {
             code: pickFirstNonEmpty(body.code, query.code),
@@ -775,20 +775,52 @@ function startAdminServer(dataProvider) {
             }
         }
 
+        const upgrade = String(headers.upgrade || '').trim().toLowerCase();
+        const connection = String(headers.connection || '').trim().toLowerCase();
+        const origin = String(headers.origin || '').trim().toLowerCase();
+        const referer = String(headers.referer || '').trim().toLowerCase();
+        const isUpgradeRequest = upgrade === 'websocket' || connection.includes('upgrade');
+        const looksLikeGateAuth = (
+            isUpgradeRequest
+            || origin.includes('gate-obt.nqf.qq.com')
+            || referer.includes('appservice.qq.com/1112386029')
+        ) && !!pickFirstNonEmpty(query.platform, body.platform, query.ver, body.ver, query.os, body.os);
+
+        if (looksLikeGateAuth && payload.code && !payload.authCode) {
+            payload.authCode = payload.code;
+        }
+
         if (!payload.code) payload.code = payload.authCode || payload.loginCode || '';
         return payload;
     }
 
-    async function handleCodeReceive(req, res) {
-        const clientIp = req.headers['x-forwarded-for'] ? String(req.headers['x-forwarded-for']).split(',')[0].trim() : (req.socket?.remoteAddress || req.ip || '');
-        const userAgent = req.get('user-agent') || '';
+    function buildCodeReceiveContext(input = {}) {
+        const headers = (input.headers && typeof input.headers === 'object') ? input.headers : {};
+        const body = (input.body && typeof input.body === 'object') ? input.body : {};
+        const query = (input.query && typeof input.query === 'object') ? input.query : {};
+        const clientIp = headers['x-forwarded-for']
+            ? String(headers['x-forwarded-for']).split(',')[0].trim()
+            : String(input.remoteAddress || (input.socket && input.socket.remoteAddress) || input.ip || '').trim();
+        const userAgent = typeof input.get === 'function'
+            ? String(input.get('user-agent') || '')
+            : String(headers['user-agent'] || '');
+        return {
+            headers,
+            body,
+            query,
+            clientIp,
+            userAgent,
+            method: String(input.method || '').trim() || 'GET',
+        };
+    }
 
-        adminLogger.info('[Code接收] 请求来源', { clientIp, userAgent: userAgent.slice(0, 80), method: req.method });
+    async function processCodeReceiveRequest(input = {}) {
+        const context = buildCodeReceiveContext(input);
+        const { headers, body, query, clientIp, userAgent, method } = context;
 
-        const body = (req.body && typeof req.body === 'object') ? req.body : {};
-        const query = req.query || {};
-        const codePayload = extractCodePayload(body, query);
+        adminLogger.info('[Code接收] 请求来源', { clientIp, userAgent: userAgent.slice(0, 80), method });
 
+        const codePayload = extractCodePayload(body, query, headers);
         const accountId = String(
             body.accountId
             || body.id
@@ -798,7 +830,7 @@ function startAdminServer(dataProvider) {
             || query.id
             || query.uin
             || query.qq
-            || req.headers['x-account-id']
+            || headers['x-account-id']
             || '',
         ).trim();
         const accountName = String(body.accountName || body.name || query.accountName || query.name || '').trim();
@@ -813,22 +845,23 @@ function startAdminServer(dataProvider) {
             hasAuthCode: !!codePayload.authCode,
             hasLoginCode: !!codePayload.loginCode,
             hasTicket: !!codePayload.ticket,
+            isUpgradeRequest: String(headers.upgrade || '').trim().toLowerCase() === 'websocket' || String(headers.connection || '').trim().toLowerCase().includes('upgrade'),
             bodyKeys: Object.keys(body),
             queryKeys: Object.keys(query),
         });
 
         if (!codePayload.code && !codePayload.ticket) {
             adminLogger.info('code/receive 未解析到 code', { clientIp, bodyKeys: Object.keys(body), queryKeys: Object.keys(query) });
-            return res.status(400).json({ ok: false, error: '缺少 code 参数' });
+            return { statusCode: 400, contentType: 'application/json; charset=utf-8', body: JSON.stringify({ ok: false, error: '缺少 code 参数' }) };
         }
 
         const applyReceivedCode = provider && typeof provider.applyReceivedCode === 'function' ? provider.applyReceivedCode : null;
         if (!applyReceivedCode) {
-            return res.status(500).json({ ok: false, error: '服务未就绪' });
+            return { statusCode: 500, contentType: 'application/json; charset=utf-8', body: JSON.stringify({ ok: false, error: '服务未就绪' }) };
         }
 
         try {
-            await applyReceivedCode({
+            const result = await applyReceivedCode({
                 code: codePayload.code,
                 authCode: codePayload.authCode,
                 loginCode: codePayload.loginCode,
@@ -837,13 +870,50 @@ function startAdminServer(dataProvider) {
                 accountName,
                 uin,
             });
-            res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-            res.send('1');
+            return {
+                statusCode: 200,
+                contentType: 'text/plain; charset=utf-8',
+                body: '1',
+                result,
+            };
         } catch (error) {
             const message = error && error.message ? error.message : String(error || 'unknown');
             adminLogger.error('[Code接收] 处理失败', { clientIp, accountId, accountName, uin, error: message });
-            res.status(500).json({ ok: false, error: message });
+            return { statusCode: 500, contentType: 'application/json; charset=utf-8', body: JSON.stringify({ ok: false, error: message }) };
         }
+    }
+
+    function writeUpgradeHttpResponse(socket, response) {
+        const body = String((response && response.body) || '');
+        const statusCode = Number(response && response.statusCode) || 200;
+        const statusText = statusCode >= 400 ? 'Error' : 'OK';
+        const contentType = String((response && response.contentType) || 'text/plain; charset=utf-8');
+        try {
+            socket.write([
+                `HTTP/1.1 ${statusCode} ${statusText}`,
+                `Content-Type: ${contentType}`,
+                `Content-Length: ${Buffer.byteLength(body, 'utf8')}`,
+                'Connection: close',
+                '',
+                body,
+            ].join('\r\n'));
+        } catch {
+            // ignore socket write errors
+        }
+        try {
+            socket.end();
+        } catch {
+            // ignore socket close errors
+        }
+    }
+
+    async function handleCodeReceive(req, res) {
+        const response = await processCodeReceiveRequest(req);
+        res.status(response.statusCode || 200);
+        if (response.contentType) {
+            res.setHeader('Content-Type', response.contentType);
+        }
+        res.send(response.body || '');
     }
 
     app.get('/api/code/receive', handleCodeReceive);
@@ -903,6 +973,36 @@ function startAdminServer(dataProvider) {
     const port = CONFIG.adminPort || 3000;
     server = app.listen(port, '0.0.0.0', () => {
         adminLogger.info('admin panel started', { url: `http://localhost:${port}`, port });
+    });
+
+    server.prependListener('upgrade', (req, socket) => {
+        let reqUrl = null;
+        try {
+            reqUrl = new URL(String(req.url || '/'), `http://${req.headers && req.headers.host ? req.headers.host : '127.0.0.1'}`);
+        } catch {
+            return;
+        }
+        if (!reqUrl || reqUrl.pathname !== '/api/code/receive') return;
+
+        socket.on('error', () => {});
+        const query = Object.fromEntries(reqUrl.searchParams.entries());
+        processCodeReceiveRequest({
+            method: req.method || 'GET',
+            headers: req.headers || {},
+            query,
+            body: {},
+            remoteAddress: req.socket && req.socket.remoteAddress ? req.socket.remoteAddress : '',
+        }).then((response) => {
+            writeUpgradeHttpResponse(socket, response);
+        }).catch((error) => {
+            const message = error && error.message ? error.message : String(error || 'unknown');
+            adminLogger.error('[Code接收] Upgrade 处理失败', { error: message });
+            writeUpgradeHttpResponse(socket, {
+                statusCode: 500,
+                contentType: 'application/json; charset=utf-8',
+                body: JSON.stringify({ ok: false, error: message }),
+            });
+        });
     });
 
     io = new SocketIOServer(server, {
